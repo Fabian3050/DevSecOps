@@ -1,0 +1,132 @@
+pipeline {
+    agent any
+
+    environment {
+        OWASP_URL = "http://api:8000/openapi.json"
+    }
+
+    options {
+        ansiColor('xterm')
+    }
+
+    stages {
+        stage('CI: Backend Tests & Coverage') {
+            steps {
+                script {
+                    sh '''
+                        docker rm -f temp-tests || true
+                        docker compose run --name temp-tests api sh -c "PYTHONPATH=/app pytest tests --cov=app --cov-report=xml:coverage.xml"
+                        docker cp temp-tests:/app/coverage.xml vuln-api/coverage.xml
+                        docker rm temp-tests
+                        sed -i 's|<source>/app/app</source>|<source>vuln-api/app</source>|g' vuln-api/coverage.xml
+                    '''
+                }
+            }
+        }
+
+        stage('CI: Frontend Tests & Build') {
+            steps {
+                script {
+                    sh '''
+                        cat << 'EOF' > frontend/Dockerfile.test
+FROM node:24-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run test:coverage
+EOF
+
+                        docker build -t frontend-test-img -f frontend/Dockerfile.test frontend/
+
+                        docker rm -f temp-front-tests || true
+                        docker create --name temp-front-tests frontend-test-img
+                        
+                        rm -rf frontend/coverage
+                        
+                        docker cp temp-front-tests:/app/coverage frontend/coverage
+                        docker rm temp-front-tests
+                        
+                        sed -i 's|SF:/app/src/|SF:frontend/src/|g' frontend/coverage/lcov.info
+                        sed -i 's|SF:src/|SF:frontend/src/|g' frontend/coverage/lcov.info
+                        
+                        docker compose build frontend                    '''
+                }
+            }
+        }
+
+        stage('SAST: SonarQube Code Analysis'){
+            environment {
+                SONAR_HOST_URL = "http://sonarqube:9000"
+                SONAR_AUTH_TOKEN = credentials('sonar-token')
+            }
+            steps {
+                script {
+                    withSonarQubeEnv('sonarqube') {
+                        docker.image('sonarsource/sonar-scanner-cli').inside("--network=sonarqube_sonar-network --user=root") {
+                            // Quitamos $SONAR_HOST_URL y forzamos la comunicación por red interna
+                            sh '''
+                            sonar-scanner \
+                                -Dproject.settings=dev-tools/sonarqube/sonar-project.properties \
+                                -Dsonar.projectBaseDir=. \
+                                -Dsonar.host.url=http://sonarqube:9000 \
+                                -Dsonar.login=$SONAR_AUTH_TOKEN
+                            '''
+                        }     
+                    }
+                }
+            }
+        } 
+
+        stage('GATE: SonarQube Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('DAST: OWASP ZAP Dynamic Scan'){
+            steps {
+                script {
+                    sh 'mkdir -p reports && chmod 777 reports'
+                    sh 'chmod +x dev-tools/jenkins/scripts/run_zap.sh'
+                    sh "./dev-tools/jenkins/scripts/run_zap.sh ${env.BUILD_NUMBER}"
+                }
+            }
+        }
+    } 
+
+   post {
+        always {
+            script {
+                def scanId = env.BUILD_NUMBER
+                
+                if (params.RUN_ZAP) {
+                    // Publicamos el reporte de la API en el panel lateral
+                    publishHTML(target: [
+                        reportDir: 'reports',
+                        reportFiles: "zap_api_report_${scanId}.html",
+                        reportName: "ZAP API Report",
+                        keepAll: true,
+                        alwaysLinkToLastBuild: true
+                    ])
+                    // Publicamos el reporte del Frontend en el panel lateral
+                    publishHTML(target: [
+                        reportDir: 'reports',
+                        reportFiles: "zap_frontend_report_${scanId}.html",
+                        reportName: "ZAP Frontend Report",
+                        keepAll: true,
+                        alwaysLinkToLastBuild: true
+                    ])
+                    
+                    // Archivamos ambos HTMLs en los artefactos del Build
+                    archiveArtifacts artifacts: "reports/zap_api_report_${scanId}.html, reports/zap_frontend_report_${scanId}.html", 
+                                     onlyIfSuccessful: false, 
+                                     allowEmptyArchive: true 
+                }
+            }
+            sh 'docker ps -a'
+        }
+    }
+} 

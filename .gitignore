@@ -1,0 +1,12 @@
+__pycache__/
+.venv
+
+reports/
+
+vuln-api/coverage.xml
+frontend/coverage/
+frontend/node_modules/
+certbot/*
+.idea/
+
+.DS_Store

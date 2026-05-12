@@ -1,0 +1,21 @@
+services:
+  zap:
+    image: zaproxy/zap-weekly
+    container_name: zap
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - /home/fabian/vuln-app-wazuh/dev-tools/reports:/zap/wrk
+    command: >
+      sh -c "echo 'Iniciando escaneo ZAP...';
+      zap-baseline.py -t http://host.docker.internal:8000
+      -r zap_report.html
+      -J zap_report.json
+      -m 2"
+    networks:
+      - zap-network
+    restart: "no"
+
+networks:
+  zap-network:
+    driver: bridge
