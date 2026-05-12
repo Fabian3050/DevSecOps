@@ -7,12 +7,56 @@
         <p class="subtitle">Visualiza y gestiona el inventario de vulnerabilidades reportado por Wazuh.</p>
       </div>
       <div>
-        <button class="btn btn-primary" @click="syncVulns" :disabled="syncing">
+        <button v-if="currentView === 'vulnerabilities'" class="btn btn-primary" @click="syncVulns" :disabled="syncing">
           <svg v-if="syncing" class="spin" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg>
           <svg v-else xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.59-9.5l1.75 1.93"></path></svg>
           {{ syncing ? 'Sincronizando con Wazuh...' : 'Forzar Sincronización' }}
         </button>
       </div>
+    </div>
+
+    <!-- View Navigation Buttons -->
+    <div class="view-navigation">
+      <button 
+        class="nav-btn" 
+        :class="{ active: currentView === 'vulnerabilities' }"
+        @click="currentView = 'vulnerabilities'; showFilters = false"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+        Vulnerabilidades
+      </button>
+      <button 
+        class="nav-btn" 
+        :class="{ active: currentView === 'managers' }"
+        @click="currentView = 'managers'; showFilters = false; fetchManagers()"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+        Managers
+      </button>
+      <button 
+        class="nav-btn" 
+        :class="{ active: currentView === 'assets' }"
+        @click="currentView = 'assets'; showFilters = false; fetchAssets()"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="7" x2="22" y2="7"></line><line x1="2" y1="17" x2="22" y2="17"></line></svg>
+        Assets
+      </button>
+      <button 
+        class="nav-btn" 
+        :class="{ active: currentView === 'catalog' }"
+        @click="currentView = 'catalog'; showFilters = false; fetchCatalog()"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+        Catálogo CVE
+      </button>
+      <button 
+        class="nav-btn" 
+        :class="{ active: currentView === 'detections' }"
+        @click="currentView = 'detections'; showFilters = false; fetchDetections()"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+        Detecciones
+      </button>
     </div>
 
     <!-- Error/Loading states -->
@@ -21,136 +65,138 @@
       {{ error }}
     </div>
 
-    <!-- Filter Toggle Bar (minimalista) -->
-    <div v-if="!loading && vulns.length > 0" class="filter-toggle-bar">
-      <button class="btn-filter-toggle" @click="showFilters = !showFilters">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
-        </svg>
-        <span>{{ showFilters ? 'Ocultar filtros' : 'Filtros avanzados' }}</span>
-      </button>
-      <button v-if="showFilters" class="btn-clear-filters" @click="clearFilters">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 6h18"></path>
-          <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
-          <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
-        </svg>
-        <span>Limpiar</span>
-      </button>
-    </div>
-
-    <!-- Dashboard Filters -->
-    <div v-show="showFilters" class="card filter-panel">
-      <div class="filter-row">
-        <div class="f-group">
-          <label>Conexión Wazuh</label>
-          <select v-model="selectedConnection" @change="onConnectionChange" class="filter-input">
-            <option value="">Todas las conexiones</option>
-            <option v-for="conn in connections" :key="conn.id" :value="conn.id">{{ conn.name }}</option>
-          </select>
-        </div>
-
-        <div class="f-group popover-wrap" v-click-outside="() => (dropdowns.agents = false)">
-          <label>Agentes</label>
-          <button class="filter-input dd-btn" @click="dropdowns.agents = !dropdowns.agents" :disabled="!agentOptions.length">
-            <span>{{ selectedAgents.length ? selectedAgents.length + ' sel.' : 'Todos' }}</span>
-            <span>▼</span>
-          </button>
-          <div v-if="dropdowns.agents" class="dd-panel fade-in">
-            <input type="text" v-model="search.agent" placeholder="Buscar agente..." class="dd-search">
-            <div class="dd-actions">
-              <span @click="selectedAgents = [...agentOptions]">Todos</span>
-              <span @click="selectedAgents = []">Limpiar</span>
-            </div>
-            <div class="dd-list custom-scroll">
-              <label v-for="agent in filteredAgents" :key="agent" class="dd-item">
-                <input type="checkbox" :value="agent" v-model="selectedAgents"> {{ agent }}
-              </label>
-            </div>
-          </div>
-        </div>
-
-        <div class="f-group popover-wrap" v-click-outside="() => (dropdowns.vulns = false)">
-          <label>CVE ID</label>
-          <button class="filter-input dd-btn" @click="dropdowns.vulns = !dropdowns.vulns" :disabled="!vulnOptions.length">
-            <span>{{ selectedVulns.length ? selectedVulns.length + ' sel.' : 'Todas' }}</span>
-            <span>▼</span>
-          </button>
-          <div v-if="dropdowns.vulns" class="dd-panel fade-in">
-            <input type="text" v-model="search.vuln" placeholder="Buscar CVE..." class="dd-search">
-            <div class="dd-actions">
-              <span @click="selectedVulns = [...vulnOptions]">Todas</span>
-              <span @click="selectedVulns = []">Limpiar</span>
-            </div>
-            <div class="dd-list custom-scroll">
-              <label v-for="vuln in filteredCVEOptions" :key="vuln" class="dd-item">
-                <input type="checkbox" :value="vuln" v-model="selectedVulns"> {{ vuln }}
-              </label>
-            </div>
-          </div>
-        </div>
-
-        <div class="f-group popover-wrap" v-click-outside="() => (dropdowns.packages = false)">
-          <label>Software Afectado</label>
-          <button class="filter-input dd-btn" @click="dropdowns.packages = !dropdowns.packages" :disabled="!packageOptions.length">
-            <span>{{ selectedPackages.length ? selectedPackages.length + ' sel.' : 'Todos' }}</span>
-            <span>▼</span>
-          </button>
-          <div v-if="dropdowns.packages" class="dd-panel fade-in">
-            <input type="text" v-model="search.package" placeholder="Buscar software..." class="dd-search">
-            <div class="dd-actions">
-              <span @click="selectedPackages = [...packageOptions]">Todos</span>
-              <span @click="selectedPackages = []">Limpiar</span>
-            </div>
-            <div class="dd-list custom-scroll">
-              <label v-for="pkg in filteredPackages" :key="pkg" class="dd-item">
-                <input type="checkbox" :value="pkg" v-model="selectedPackages"> {{ pkg }}
-              </label>
-            </div>
-          </div>
-        </div>
-
-        <div class="f-group popover-wrap" v-click-outside="() => (dropdowns.severity = false)">
-          <label>Severidad</label>
-          <button class="filter-input dd-btn" @click="dropdowns.severity = !dropdowns.severity" :disabled="!severityOptions.length">
-            <span>{{ selectedSeverities.length ? selectedSeverities.length + ' sel.' : 'Todas' }}</span>
-            <span>▼</span>
-          </button>
-          <div v-if="dropdowns.severity" class="dd-panel fade-in">
-            <div class="dd-actions">
-              <span @click="selectedSeverities = [...severityOptions]">Todas</span>
-              <span @click="selectedSeverities = []">Limpiar</span>
-            </div>
-            <div class="dd-list custom-scroll">
-              <label v-for="sev in severityOptions" :key="sev" class="dd-item">
-                <input type="checkbox" :value="sev" v-model="selectedSeverities"> 
-                <span :class="'badge-mini ' + getSeverityBadgeClass(sev)">{{ sev }}</span>
-              </label>
-            </div>
-          </div>
-        </div>
-
-        <div class="f-group">
-          <label>Score CVSS (Base)</label>
-          <div class="range-inputs">
-            <input type="number" v-model.number="scoreMin" min="0" max="10" step="0.1" placeholder="Min" class="filter-input-sm">
-            <span>-</span>
-            <input type="number" v-model.number="scoreMax" min="0" max="10" step="0.1" placeholder="Max" class="filter-input-sm">
-          </div>
-        </div>
-      </div>
-    </div>
-
     <div v-if="loading" class="empty-state">
       <div class="spinner-box">
         <svg class="spin" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg>
       </div>
-      <p>Cargando datos del cluster...</p>
+      <p>Cargando datos {{ viewTitles[currentView] }}...</p>
     </div>
 
-    <!-- Table -->
-    <div v-else class="card" style="padding: 0;">
-      <div class="table-wrapper">
+    <!-- VULNERABILITIES VIEW -->
+    <template v-if="currentView === 'vulnerabilities'">
+      <!-- Filter Toggle Bar (minimalista) -->
+      <div v-if="!loading && vulns.length > 0" class="filter-toggle-bar">
+        <button class="btn-filter-toggle" @click="showFilters = !showFilters">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+          </svg>
+          <span>{{ showFilters ? 'Ocultar filtros' : 'Filtros avanzados' }}</span>
+        </button>
+        <button v-if="showFilters" class="btn-clear-filters" @click="clearFilters">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 6h18"></path>
+            <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+            <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+          </svg>
+          <span>Limpiar</span>
+        </button>
+      </div>
+
+      <!-- Dashboard Filters -->
+      <div v-show="showFilters" class="card filter-panel">
+        <div class="filter-row">
+          <div class="f-group">
+            <label>Conexión Wazuh</label>
+            <select v-model="selectedConnection" @change="onConnectionChange" class="filter-input">
+              <option value="">Todas las conexiones</option>
+              <option v-for="conn in connections" :key="conn.id" :value="conn.id">{{ conn.name }}</option>
+            </select>
+          </div>
+
+          <div class="f-group popover-wrap" v-click-outside="() => (dropdowns.agents = false)">
+            <label>Agentes</label>
+            <button class="filter-input dd-btn" @click="dropdowns.agents = !dropdowns.agents" :disabled="!agentOptions.length">
+              <span>{{ selectedAgents.length ? selectedAgents.length + ' sel.' : 'Todos' }}</span>
+              <span>▼</span>
+            </button>
+            <div v-if="dropdowns.agents" class="dd-panel fade-in">
+              <input type="text" v-model="search.agent" placeholder="Buscar agente..." class="dd-search">
+              <div class="dd-actions">
+                <span @click="selectedAgents = [...agentOptions]">Todos</span>
+                <span @click="selectedAgents = []">Limpiar</span>
+              </div>
+              <div class="dd-list custom-scroll">
+                <label v-for="agent in filteredAgents" :key="agent" class="dd-item">
+                  <input type="checkbox" :value="agent" v-model="selectedAgents"> {{ agent }}
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="f-group popover-wrap" v-click-outside="() => (dropdowns.vulns = false)">
+            <label>CVE ID</label>
+            <button class="filter-input dd-btn" @click="dropdowns.vulns = !dropdowns.vulns" :disabled="!vulnOptions.length">
+              <span>{{ selectedVulns.length ? selectedVulns.length + ' sel.' : 'Todas' }}</span>
+              <span>▼</span>
+            </button>
+            <div v-if="dropdowns.vulns" class="dd-panel fade-in">
+              <input type="text" v-model="search.vuln" placeholder="Buscar CVE..." class="dd-search">
+              <div class="dd-actions">
+                <span @click="selectedVulns = [...vulnOptions]">Todas</span>
+                <span @click="selectedVulns = []">Limpiar</span>
+              </div>
+              <div class="dd-list custom-scroll">
+                <label v-for="vuln in filteredCVEOptions" :key="vuln" class="dd-item">
+                  <input type="checkbox" :value="vuln" v-model="selectedVulns"> {{ vuln }}
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="f-group popover-wrap" v-click-outside="() => (dropdowns.packages = false)">
+            <label>Software Afectado</label>
+            <button class="filter-input dd-btn" @click="dropdowns.packages = !dropdowns.packages" :disabled="!packageOptions.length">
+              <span>{{ selectedPackages.length ? selectedPackages.length + ' sel.' : 'Todos' }}</span>
+              <span>▼</span>
+            </button>
+            <div v-if="dropdowns.packages" class="dd-panel fade-in">
+              <input type="text" v-model="search.package" placeholder="Buscar software..." class="dd-search">
+              <div class="dd-actions">
+                <span @click="selectedPackages = [...packageOptions]">Todos</span>
+                <span @click="selectedPackages = []">Limpiar</span>
+              </div>
+              <div class="dd-list custom-scroll">
+                <label v-for="pkg in filteredPackages" :key="pkg" class="dd-item">
+                  <input type="checkbox" :value="pkg" v-model="selectedPackages"> {{ pkg }}
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="f-group popover-wrap" v-click-outside="() => (dropdowns.severity = false)">
+            <label>Severidad</label>
+            <button class="filter-input dd-btn" @click="dropdowns.severity = !dropdowns.severity" :disabled="!severityOptions.length">
+              <span>{{ selectedSeverities.length ? selectedSeverities.length + ' sel.' : 'Todas' }}</span>
+              <span>▼</span>
+            </button>
+            <div v-if="dropdowns.severity" class="dd-panel fade-in">
+              <div class="dd-actions">
+                <span @click="selectedSeverities = [...severityOptions]">Todas</span>
+                <span @click="selectedSeverities = []">Limpiar</span>
+              </div>
+              <div class="dd-list custom-scroll">
+                <label v-for="sev in severityOptions" :key="sev" class="dd-item">
+                  <input type="checkbox" :value="sev" v-model="selectedSeverities"> 
+                  <span :class="'badge-mini ' + getSeverityBadgeClass(sev)">{{ sev }}</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="f-group">
+            <label>Score CVSS (Base)</label>
+            <div class="range-inputs">
+              <input type="number" v-model.number="scoreMin" min="0" max="10" step="0.1" placeholder="Min" class="filter-input-sm">
+              <span>-</span>
+              <input type="number" v-model.number="scoreMax" min="0" max="10" step="0.1" placeholder="Max" class="filter-input-sm">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Vulnerabilities Table -->
+      <div v-if="!loading" class="card" style="padding: 0;">
+        <div class="table-wrapper">
         <div v-if="totalPages > 1" class="pagination-header">
           <span class="pagination-info">
             Mostrando {{ (currentPage - 1) * itemsPerPage + 1 }} - {{ Math.min(currentPage * itemsPerPage, sortedVulns.length) }} de {{ sortedVulns.length }} vulnerabilidades
@@ -346,6 +392,169 @@
         </div>
       </div>
     </div>
+    </template>
+
+    <!-- MANAGERS VIEW -->
+    <template v-if="currentView === 'managers'">
+      <div v-if="!loading" class="card" style="padding: 0;">
+        <div class="table-wrapper">
+          <div v-if="managers.length > 0" class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Nombre del Manager</th>
+                  <th>URL API</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="manager in managers" :key="manager.id">
+                  <td class="font-medium">{{ manager.name }}</td>
+                  <td class="text-muted" style="font-size: 0.9rem; word-break: break-all;">{{ manager.api_url }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div v-else class="empty-state" style="padding: 3rem;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+            <p style="margin-top: 1rem;">No hay managers configurados</p>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- ASSETS VIEW -->
+    <template v-if="currentView === 'assets'">
+      <div class="card" style="margin-bottom: 1rem; padding: 1rem;">
+        <label style="font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.5rem;">Filtrar por Manager</label>
+        <select v-model="filterManagerId" class="filter-input" style="max-width: 300px;">
+          <option value="">Todos los managers</option>
+          <option v-for="manager in managers" :key="manager.id" :value="manager.id">{{ manager.name }}</option>
+        </select>
+      </div>
+      <div v-if="!loading" class="card" style="padding: 0;">
+        <div class="table-wrapper">
+          <div v-if="filteredAssets.length > 0" class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Hostname</th>
+                  <th>ID del Agente Wazuh</th>
+                  <th>Dirección IP</th>
+                  <th>SO</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="asset in filteredAssets" :key="asset.id">
+                  <td class="font-medium">{{ asset.hostname || 'N/A' }}</td>
+                  <td class="text-muted">{{ asset.wazuh_agent_id }}</td>
+                  <td style="font-family: monospace; font-size: 0.9rem;">{{ asset.ip_address || 'N/A' }}</td>
+                  <td>{{ asset.os_version || 'N/A' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div v-else class="empty-state" style="padding: 3rem;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="7" x2="22" y2="7"></line><line x1="2" y1="17" x2="22" y2="17"></line></svg>
+            <p style="margin-top: 1rem;">No hay assets disponibles</p>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- VULNERABILITY CATALOG VIEW -->
+    <template v-if="currentView === 'catalog'">
+      <div v-if="!loading" class="card" style="padding: 0;">
+        <div class="table-wrapper">
+          <div v-if="vulnerabilityCatalog.length > 0" class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>CVE ID</th>
+                  <th>Severidad</th>
+                  <th>CVSS Score</th>
+                  <th>Descripción</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="cve in vulnerabilityCatalog" :key="cve.cve_id">
+                  <td class="font-medium" style="font-family: monospace;">{{ cve.cve_id }}</td>
+                  <td>
+                    <span :class="getSeverityClass(cve.severity)">
+                      {{ (cve.severity || 'UNKNOWN').toUpperCase() }}
+                    </span>
+                  </td>
+                  <td class="font-medium">{{ cve.cvss_score !== null ? cve.cvss_score.toFixed(1) : 'N/A' }}</td>
+                  <td class="text-muted" style="font-size: 0.85rem; max-width: 400px; white-space: pre-wrap; word-wrap: break-word;">{{ cve.description || 'Sin descripción' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div v-else class="empty-state" style="padding: 3rem;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+            <p style="margin-top: 1rem;">No hay CVEs en el catálogo</p>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- VULNERABILITY DETECTIONS VIEW -->
+    <template v-if="currentView === 'detections'">
+      <div class="card" style="margin-bottom: 1rem; padding: 1rem;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+          <div>
+            <label style="font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.5rem;">Filtrar por Asset</label>
+            <select v-model="filterAssetId" class="filter-input">
+              <option value="">Todos los assets</option>
+              <option v-for="asset in assets" :key="asset.id" :value="asset.id">{{ asset.hostname || asset.wazuh_agent_id }}</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.5rem;">Filtrar por CVE</label>
+            <select v-model="filterCveId" class="filter-input">
+              <option value="">Todos los CVEs</option>
+              <option v-for="cve in vulnerabilityCatalog" :key="cve.cve_id" :value="cve.cve_id">{{ cve.cve_id }}</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div v-if="!loading" class="card" style="padding: 0;">
+        <div class="table-wrapper">
+          <div v-if="filteredDetections.length > 0" class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>CVE ID</th>
+                  <th>Asset</th>
+                  <th>Paquete</th>
+                  <th>Versión</th>
+                  <th>Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="detection in filteredDetections" :key="detection.timestamp">
+                  <td class="text-muted" style="font-size: 0.85rem;">{{ formatDate(detection.timestamp) }}</td>
+                  <td class="font-medium" style="font-family: monospace; font-size: 0.9rem;">{{ detection.cve_id }}</td>
+                  <td class="text-muted" style="font-size: 0.9rem;">{{ getAssetHostname(detection.asset_id) || 'N/A' }}</td>
+                  <td>{{ detection.package_name }}</td>
+                  <td style="font-size: 0.9rem; color: var(--text-muted);">{{ detection.package_version }}</td>
+                  <td>
+                    <span :class="detection.status === 'DETECTED' ? 'badge badge-critical' : 'badge badge-low'">
+                      {{ detection.status }}
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div v-else class="empty-state" style="padding: 3rem;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+            <p style="margin-top: 1rem;">No hay detecciones de vulnerabilidades</p>
+          </div>
+        </div>
+      </div>
+    </template>
+
   </div>
 </template>
 
@@ -353,8 +562,20 @@
 import { ref, onMounted, computed, watch, reactive } from 'vue'
 import vulnService from '../../application/services/vulnService'
 import wazuhService from '../../application/services/wazuhService'
+import managerService from '../../application/services/managerService'
+import assetService from '../../application/services/assetService'
+import catalogService from '../../application/services/catalogService'
+import detectionService from '../../application/services/detectionService'
+
+// View state
+const currentView = ref('vulnerabilities')
 
 const vulns = ref([])
+const managers = ref([])
+const assets = ref([])
+const vulnerabilityCatalog = ref([])
+const vulnerabilityDetections = ref([])
+
 const loading = ref(true)
 const syncing = ref(false)
 const error = ref('')
@@ -367,7 +588,11 @@ const currentPage = ref(1)
 const itemsPerPage = 50
 const pageJump = 10
 
-// Filter state
+// Filtros para vistas
+const filterManagerId = ref('')
+const filterAssetId = ref('')
+const filterCveId = ref('')
+
 const connections = ref([])
 const agentOptions = ref([])
 const vulnOptions = ref([])
@@ -544,6 +769,31 @@ const visiblePages = computed(() => {
   return pages
 })
 
+// Computadas para datos filtrados
+const filteredAssets = computed(() => {
+  if (!filterManagerId.value) return assets.value
+  return assets.value.filter(asset => asset.manager_id === filterManagerId.value)
+})
+
+const filteredDetections = computed(() => {
+  let result = vulnerabilityDetections.value
+  
+  if (filterAssetId.value) {
+    result = result.filter(d => d.asset_id === filterAssetId.value)
+  }
+  
+  if (filterCveId.value) {
+    result = result.filter(d => d.cve_id === filterCveId.value)
+  }
+  
+  return result
+})
+
+const getAssetHostname = (assetId) => {
+  const asset = assets.value.find(a => a.id === assetId)
+  return asset ? (asset.hostname || asset.wazuh_agent_id) : 'Unknown'
+}
+
 const nextPage = () => {
   if (currentPage.value < totalPages.value) currentPage.value++
 }
@@ -643,6 +893,70 @@ const syncVulns = async () => {
   } finally {
     syncing.value = false
   }
+}
+
+const fetchManagers = async () => {
+  loading.value = true
+  error.value = ''
+  try {
+    const res = await managerService.getManagers({ limit: 100 })
+    managers.value = res?.data || []
+  } catch (err) {
+    console.error('Error fetching managers:', err)
+    managers.value = []
+  } finally {
+    loading.value = false
+  }
+}
+
+const fetchAssets = async () => {
+  loading.value = true
+  error.value = ''
+  try {
+    const res = await assetService.getAssets({ limit: 100 })
+    assets.value = res?.data || []
+  } catch (err) {
+    console.error('Error fetching assets:', err)
+    assets.value = []
+  } finally {
+    loading.value = false
+  }
+}
+
+const fetchCatalog = async () => {
+  loading.value = true
+  error.value = ''
+  try {
+    const res = await catalogService.getVulnerabilityCatalog({ limit: 1000 })
+    vulnerabilityCatalog.value = res?.data || []
+  } catch (err) {
+    console.error('Error fetching catalog:', err)
+    vulnerabilityCatalog.value = []
+  } finally {
+    loading.value = false
+  }
+}
+
+const fetchDetections = async () => {
+  loading.value = true
+  error.value = ''
+  try {
+    const res = await detectionService.getVulnerabilityDetections({ limit: 1000 })
+    vulnerabilityDetections.value = res?.data || []
+  } catch (err) {
+    console.error('Error fetching detections:', err)
+    vulnerabilityDetections.value = []
+  } finally {
+    loading.value = false
+  }
+}
+
+const viewTitles = {
+  vulnerabilities: 'de vulnerabilidades',
+  managers: 'de managers',
+  assets: 'de assets',
+  catalog: 'del catálogo CVE',
+  detections: 'de detecciones'
 }
 
 const formatDate = (dateString) => {
@@ -1291,6 +1605,93 @@ th {
 .badge-low {
   background: rgba(59, 130, 246, 0.15);
   color: #3b82f6;
+}
+
+/* View Navigation */
+.view-navigation {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.nav-btn:hover {
+  background-color: var(--bg-hover);
+  border-color: var(--text-muted);
+  color: var(--text-main);
+}
+
+.nav-btn.active {
+  background-color: var(--primary);
+  color: #000;
+  border-color: var(--primary);
+}
+
+/* Data Tables */
+.table-container {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.data-table thead {
+  background-color: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.data-table th {
+  padding: 1rem;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-right: 1px solid var(--border);
+}
+
+.data-table th:last-child {
+  border-right: none;
+}
+
+.data-table tbody tr {
+  border-bottom: 1px solid var(--border);
+}
+
+.data-table tbody tr:hover {
+  background-color: var(--bg-hover);
+}
+
+.data-table td {
+  padding: 0.85rem 1rem;
+  border-right: 1px solid var(--border);
+  color: var(--text-main);
+}
+
+.data-table td:last-child {
+  border-right: none;
+}
+
+.text-muted {
+  color: var(--text-muted);
 }
 
 @media (max-width: 1400px) {

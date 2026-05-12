@@ -10,3 +10,5 @@ certbot/*
 .idea/
 
 .DS_Store
+
+.env
