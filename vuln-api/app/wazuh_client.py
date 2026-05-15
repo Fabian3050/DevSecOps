@@ -4,6 +4,7 @@ from requests.auth import HTTPBasicAuth
 
 VULN_INDEX = "wazuh-states-vulnerabilities-*/_search"
 
+# captura las vulnerabilidades desde Wazuh, con paginación para evitar problemas de memoria
 def fetch_all_vulns(indexer_url: str, wazuh_user: str, wazuh_password: str):
     url = f"{indexer_url}/{VULN_INDEX}"
     body = {"size": 10000, "_source": True}
@@ -18,7 +19,7 @@ def fetch_all_vulns(indexer_url: str, wazuh_user: str, wazuh_password: str):
     hits = resp.json()["hits"]["hits"]
     return [h["_source"] for h in hits]
 
-
+# prueba la conexión a Wazuh, devolviendo True si es exitosa y False si no lo es
 def test_connection(indexer_url: str, wazuh_user: str, wazuh_password: str) -> bool:
     try:
         resp = requests.get(
