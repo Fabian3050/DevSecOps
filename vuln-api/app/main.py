@@ -468,24 +468,8 @@ def _create_vulnerability_detection(
 
         detected_at = _parse_wazuh_datetime(timestamp) or datetime.now(timezone.utc)
 
-        existing = db.query(VulnerabilityDetections).filter_by(
-            asset_id=asset_id,
-            cve_id=cve_id,
-            package_name=package_name,
-            package_version=package_version,
-            status=status,
-            timestamp=detected_at,
-        ).first()
-        if existing:
-            return True
-
-        # La PK actual es timestamp; evitamos colisiones desplazando microsegundos.
-        candidate_timestamp = detected_at
-        while db.query(VulnerabilityDetections).filter_by(timestamp=candidate_timestamp).first():
-            candidate_timestamp = candidate_timestamp + timedelta(microseconds=1)
-
         detection = VulnerabilityDetections(
-            timestamp=candidate_timestamp,
+            timestamp=detected_at,
             asset_id=asset_id,
             cve_id=cve_id,
             status=status,

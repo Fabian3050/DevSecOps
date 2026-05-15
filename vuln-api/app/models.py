@@ -141,7 +141,8 @@ class VulnerabilityCatalog(Base):
 
 class VulnerabilityDetections(Base):
     __tablename__ = "vulnerability_detections"
-    timestamp = Column(DateTime(timezone=True), primary_key=True, server_default=func.now(), nullable=False)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    timestamp = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
     asset_id = Column(UUID(as_uuid=True), ForeignKey("assets.id"), nullable=False)
     cve_id = Column(String, ForeignKey("vulnerability_catalog.cve_id"), nullable=False)
     status = Column(Enum("DETECTED", "RESOLVED", "RE-EMERGED", name="vulnerability_status_enum"), nullable=False, default="DETECTED")

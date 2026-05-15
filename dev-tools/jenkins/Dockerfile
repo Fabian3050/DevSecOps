@@ -39,6 +39,7 @@ RUN jenkins-plugin-cli --plugins \
     docker-workflow \
     credentials-binding \
     htmlpublisher \
+    sonar \
     pipeline-stage-view
 
 # Exponer puertos

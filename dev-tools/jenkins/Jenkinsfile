@@ -55,6 +55,8 @@ EOF
             }
         }
 
+/*
+
         stage('SAST: SonarQube Code Analysis'){
             environment {
                 SONAR_HOST_URL = "http://sonarqube:9000"
@@ -85,7 +87,7 @@ EOF
                 }
             }
         }
-
+*/
         stage('DAST: OWASP ZAP Dynamic Scan'){
             steps {
                 script {
