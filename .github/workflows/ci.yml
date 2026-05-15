@@ -31,6 +31,8 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run backend tests
+        env:
+          PYTHONPATH: .
         run: pytest tests --cov=app --cov-report=term-missing
 
   frontend:
