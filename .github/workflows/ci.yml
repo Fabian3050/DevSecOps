@@ -5,6 +5,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   backend:
     name: Backend tests
@@ -33,7 +36,7 @@ jobs:
       - name: Run backend tests
         env:
           PYTHONPATH: .
-        run: pytest tests --cov=app --cov-report=term-missing
+        run: pytest tests --cov=app --cov-report=xml --cov-report=term-missing
 
   frontend:
     name: Frontend tests and build
@@ -60,3 +63,28 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+    
+  sonarqube:
+    name: SonarCloud Analysis
+    runs-on: ubuntu-latest
+    needs: [backend] # Solo corre si los tests pasan
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Necesario para que Sonar analice el historial
+
+      - name: SonarCloud Scan
+        uses: sonarsource/sonarcloud-github-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
+            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
+            -Dsonar.sources=.
+            -Dsonar.python.version=3.12
+            -Dsonar.python.coverage.reportPaths=vuln-api/coverage.xml
+            -Dsonar.javascript.lcov.reportPaths=frontend/coverage/lcov.info
+            -Dsonar.login=${{ secrets.SONAR_TOKEN }}
