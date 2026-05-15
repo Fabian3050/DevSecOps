@@ -550,7 +550,11 @@
           <div v-else class="empty-state" style="padding: 3rem;">
             <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
             <p style="margin-top: 1rem;">No hay detecciones de vulnerabilidades</p>
-          </div>
+          </div> 
+          <button class="btn-icon-page" :disabled="currentPage === totalPages" @click="jumpForward" title="Avanzar 5 páginas" aria-label="Avanzar 5 páginas">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="11 17 16 12 11 7"></polyline><polyline points="5 17 10 12 5 7"></polyline></svg>
+          </button>
+          
         </div>
       </div>
     </template>

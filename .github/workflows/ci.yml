@@ -63,7 +63,8 @@ jobs:
 
       - name: Build frontend
         run: npm run build
-    
+  
+  # SAST: SonarCloud Analysis
   sonarqube:
     name: SonarCloud Analysis
     runs-on: ubuntu-latest
