@@ -5,9 +5,10 @@ pipeline {
         OWASP_URL = "http://api:8000/openapi.json"
     }
 
+    /*
     options {
         ansiColor('xterm')
-    }
+    }*/
 
     stages {
         stage('CI: Backend Tests & Coverage') {
