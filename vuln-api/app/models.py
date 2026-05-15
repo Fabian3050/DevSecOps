@@ -16,7 +16,6 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from .db import Base
 import uuid
-import enum
 
 class User(Base):
     __tablename__ = "users"
