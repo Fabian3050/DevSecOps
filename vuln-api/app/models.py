@@ -138,6 +138,7 @@ class VulnerabilityCatalog(Base):
     cvss_score = Column(Numeric(precision=3, scale=1))  
     detections = relationship("VulnerabilityDetections", back_populates="cve")
 
+
 class VulnerabilityDetections(Base):
     __tablename__ = "vulnerability_detections"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

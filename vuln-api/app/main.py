@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from typing import List, Annotated, Optional
 from pydantic import BaseModel
 from sqlalchemy.sql import func
+from sqlalchemy import text
 from .db import Base, engine, get_db, SessionLocal
 from .models import (
     User,
@@ -50,6 +51,69 @@ class WazuhConnectionResponse(BaseModel):
     indexer_url: str
     wazuh_user: str
     is_active: bool
+
+def init_stored_procedures():
+    with engine.connect() as conn:
+        # Filtro por nivel de criticidad (Severity)
+        conn.execute(text("""
+            CREATE OR REPLACE PROCEDURE sp_get_vulns_by_severity(
+                IN p_severity TEXT,
+                IN p_connection_id INTEGER,
+                INOUT p_cursor refcursor DEFAULT 'cursor_result'
+            )
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                OPEN p_cursor FOR
+                    SELECT * FROM wazuh_vulnerabilities
+                    WHERE (p_connection_id IS NULL OR connection_id = p_connection_id)
+                    AND (p_severity IS NULL OR p_severity = '' OR severity ILIKE '%' || p_severity || '%');
+            END;
+            $$;
+        """))
+
+        # Filtro por sistema operativo (OS)
+        conn.execute(text("""
+            CREATE OR REPLACE PROCEDURE sp_get_vulns_by_os(
+                IN p_os TEXT,
+                IN p_connection_id INTEGER,
+                INOUT p_cursor refcursor DEFAULT 'cursor_result'
+            )
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                OPEN p_cursor FOR
+                    SELECT * FROM wazuh_vulnerabilities
+                    WHERE (p_connection_id IS NULL OR connection_id = p_connection_id)
+                    AND (p_os IS NULL OR p_os = '' OR COALESCE(os_platform, '') ILIKE '%' || p_os || '%' OR COALESCE(os_full, '') ILIKE '%' || p_os || '%');
+            END;
+            $$;
+        """))
+
+        # Filtro por agente Wazuh (Agent ID / Name)
+        conn.execute(text("""
+            CREATE OR REPLACE PROCEDURE sp_get_vulns_by_agent(
+                IN p_agent TEXT,
+                IN p_connection_id INTEGER,
+                INOUT p_cursor refcursor DEFAULT 'cursor_result'
+            )
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                OPEN p_cursor FOR
+                    SELECT * FROM wazuh_vulnerabilities
+                WHERE (p_connection_id IS NULL OR connection_id = p_connection_id)
+                  AND (p_agent IS NULL OR p_agent = '' OR agent_id = p_agent OR COALESCE(agent_name, '') ILIKE '%' || p_agent || '%');
+            END;
+            $$;
+        """))
+        conn.commit()
+
+try:
+    init_stored_procedures()
+except Exception as e:
+    print(f"Error initializing stored procedures: {e}")
+
 
 
 def create_default_admin():
@@ -774,3 +838,50 @@ def list_vulnerability_detections(
         }
         for r in rows
     ]
+
+@app.get("/procedures/filter-by-severity")
+def filter_by_severity_procedure(
+    severity: Optional[str] = None,
+    connection_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    with db.connection().begin():
+        db.execute(
+            text("CALL sp_get_vulns_by_severity(:sev, :conn_id, 'cursor_sev')"),
+            {"sev": severity, "conn_id": connection_id}
+        )
+        rows = db.execute(text("FETCH ALL FROM cursor_sev")).mappings().all()
+        return [dict(row) for row in rows]
+
+
+@app.get("/procedures/filter-by-os")
+def filter_by_os_procedure(
+    os_name: Optional[str] = None,
+    connection_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    with db.connection().begin():
+        db.execute(
+            text("CALL sp_get_vulns_by_os(:os, :conn_id, 'cursor_os')"),
+            {"os": os_name, "conn_id": connection_id}
+        )
+        rows = db.execute(text("FETCH ALL FROM cursor_os")).mappings().all()
+        return [dict(row) for row in rows]
+
+
+@app.get("/procedures/filter-by-agent")
+def filter_by_agent_procedure(
+    agent: Optional[str] = None,
+    connection_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    with db.connection().begin():
+        db.execute(
+            text("CALL sp_get_vulns_by_agent(:ag, :conn_id, 'cursor_ag')"),
+            {"ag": agent, "conn_id": connection_id}
+        )
+        rows = db.execute(text("FETCH ALL FROM cursor_ag")).mappings().all()
+        return [dict(row) for row in rows]
