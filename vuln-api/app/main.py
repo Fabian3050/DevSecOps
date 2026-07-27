@@ -53,24 +53,31 @@ class WazuhConnectionResponse(BaseModel):
     is_active: bool
 
 def init_materialized_views():
+    is_sqlite = engine.dialect.name == "sqlite"
     with engine.connect() as conn:
-        # Limpiar procedimientos anteriores
-        conn.execute(text("DROP PROCEDURE IF EXISTS sp_get_vulns_by_severity(TEXT, INTEGER, refcursor);"))
-        conn.execute(text("DROP PROCEDURE IF EXISTS sp_get_vulns_by_os(TEXT, INTEGER, refcursor);"))
-        conn.execute(text("DROP PROCEDURE IF EXISTS sp_get_vulns_by_agent(TEXT, INTEGER, refcursor);"))
-        
-        # Crear Vista Materializada principal
-        conn.execute(text("""
-            CREATE MATERIALIZED VIEW IF NOT EXISTS mv_wazuh_vulnerabilities AS
-            SELECT * FROM wazuh_vulnerabilities;
-        """))
-        
-        # Crear índices para búsquedas de alta velocidad
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_mv_severity ON mv_wazuh_vulnerabilities (severity);"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_mv_os_platform ON mv_wazuh_vulnerabilities (os_platform);"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_mv_os_full ON mv_wazuh_vulnerabilities (os_full);"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_mv_agent_id ON mv_wazuh_vulnerabilities (agent_id);"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_mv_connection_id ON mv_wazuh_vulnerabilities (connection_id);"))
+        if is_sqlite:
+            # En SQLite usamos una vista normal para los tests unitarios
+            conn.execute(text("DROP VIEW IF EXISTS mv_wazuh_vulnerabilities;"))
+            conn.execute(text("""
+                CREATE VIEW mv_wazuh_vulnerabilities AS
+                SELECT * FROM wazuh_vulnerabilities;
+            """))
+        else:
+            # En PostgreSQL usamos Vistas Materializadas para producción
+            conn.execute(text("DROP PROCEDURE IF EXISTS sp_get_vulns_by_severity(TEXT, INTEGER, refcursor);"))
+            conn.execute(text("DROP PROCEDURE IF EXISTS sp_get_vulns_by_os(TEXT, INTEGER, refcursor);"))
+            conn.execute(text("DROP PROCEDURE IF EXISTS sp_get_vulns_by_agent(TEXT, INTEGER, refcursor);"))
+            
+            conn.execute(text("""
+                CREATE MATERIALIZED VIEW IF NOT EXISTS mv_wazuh_vulnerabilities AS
+                SELECT * FROM wazuh_vulnerabilities;
+            """))
+            
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_mv_severity ON mv_wazuh_vulnerabilities (severity);"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_mv_os_platform ON mv_wazuh_vulnerabilities (os_platform);"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_mv_os_full ON mv_wazuh_vulnerabilities (os_full);"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_mv_agent_id ON mv_wazuh_vulnerabilities (agent_id);"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_mv_connection_id ON mv_wazuh_vulnerabilities (connection_id);"))
         conn.commit()
 
 try:
@@ -370,10 +377,11 @@ def sync_connection(
     count = process_wazuh_vulnerabilities(db, conn.id, raw_vulns)
     db.commit()
     
-    # Refrescar vista materializada luego de la sincronización
-    with engine.connect() as db_conn:
-        db_conn.execute(text("REFRESH MATERIALIZED VIEW mv_wazuh_vulnerabilities;"))
-        db_conn.commit()
+    # Refrescar vista materializada luego de la sincronización (Solo en PostgreSQL)
+    if engine.dialect.name == "postgresql":
+        with engine.connect() as db_conn:
+            db_conn.execute(text("REFRESH MATERIALIZED VIEW mv_wazuh_vulnerabilities;"))
+            db_conn.commit()
 
     return {"synced": count, "connection": conn.name}
 
@@ -676,10 +684,11 @@ def sync_all_connections(
             count = process_wazuh_vulnerabilities(db, conn.id, raw_vulns)
             db.commit()
             
-            # Refrescar vista materializada
-            with engine.connect() as db_conn:
-                db_conn.execute(text("REFRESH MATERIALIZED VIEW mv_wazuh_vulnerabilities;"))
-                db_conn.commit()
+            # Refrescar vista materializada (Solo en PostgreSQL)
+            if engine.dialect.name == "postgresql":
+                with engine.connect() as db_conn:
+                    db_conn.execute(text("REFRESH MATERIALIZED VIEW mv_wazuh_vulnerabilities;"))
+                    db_conn.commit()
 
             results.append({"connection": conn.name, "synced": count, "ok": True})
         except Exception as e:
