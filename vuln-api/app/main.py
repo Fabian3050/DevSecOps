@@ -52,69 +52,31 @@ class WazuhConnectionResponse(BaseModel):
     wazuh_user: str
     is_active: bool
 
-def init_stored_procedures():
+def init_materialized_views():
     with engine.connect() as conn:
-        # Filtro por nivel de criticidad (Severity)
+        # Limpiar procedimientos anteriores
+        conn.execute(text("DROP PROCEDURE IF EXISTS sp_get_vulns_by_severity(TEXT, INTEGER, refcursor);"))
+        conn.execute(text("DROP PROCEDURE IF EXISTS sp_get_vulns_by_os(TEXT, INTEGER, refcursor);"))
+        conn.execute(text("DROP PROCEDURE IF EXISTS sp_get_vulns_by_agent(TEXT, INTEGER, refcursor);"))
+        
+        # Crear Vista Materializada principal
         conn.execute(text("""
-            CREATE OR REPLACE PROCEDURE sp_get_vulns_by_severity(
-                IN p_severity TEXT,
-                IN p_connection_id INTEGER,
-                INOUT p_cursor refcursor DEFAULT 'cursor_result'
-            )
-            LANGUAGE plpgsql
-            AS $$
-            BEGIN
-                OPEN p_cursor FOR
-                    SELECT * FROM wazuh_vulnerabilities
-                    WHERE (p_connection_id IS NULL OR connection_id = p_connection_id)
-                    AND (p_severity IS NULL OR p_severity = '' OR severity ILIKE '%' || p_severity || '%');
-            END;
-            $$;
+            CREATE MATERIALIZED VIEW IF NOT EXISTS mv_wazuh_vulnerabilities AS
+            SELECT * FROM wazuh_vulnerabilities;
         """))
-
-        # Filtro por sistema operativo (OS)
-        conn.execute(text("""
-            CREATE OR REPLACE PROCEDURE sp_get_vulns_by_os(
-                IN p_os TEXT,
-                IN p_connection_id INTEGER,
-                INOUT p_cursor refcursor DEFAULT 'cursor_result'
-            )
-            LANGUAGE plpgsql
-            AS $$
-            BEGIN
-                OPEN p_cursor FOR
-                    SELECT * FROM wazuh_vulnerabilities
-                    WHERE (p_connection_id IS NULL OR connection_id = p_connection_id)
-                    AND (p_os IS NULL OR p_os = '' OR COALESCE(os_platform, '') ILIKE '%' || p_os || '%' OR COALESCE(os_full, '') ILIKE '%' || p_os || '%');
-            END;
-            $$;
-        """))
-
-        # Filtro por agente Wazuh (Agent ID / Name)
-        conn.execute(text("""
-            CREATE OR REPLACE PROCEDURE sp_get_vulns_by_agent(
-                IN p_agent TEXT,
-                IN p_connection_id INTEGER,
-                INOUT p_cursor refcursor DEFAULT 'cursor_result'
-            )
-            LANGUAGE plpgsql
-            AS $$
-            BEGIN
-                OPEN p_cursor FOR
-                    SELECT * FROM wazuh_vulnerabilities
-                WHERE (p_connection_id IS NULL OR connection_id = p_connection_id)
-                  AND (p_agent IS NULL OR p_agent = '' OR agent_id = p_agent OR COALESCE(agent_name, '') ILIKE '%' || p_agent || '%');
-            END;
-            $$;
-        """))
+        
+        # Crear índices para búsquedas de alta velocidad
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_mv_severity ON mv_wazuh_vulnerabilities (severity);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_mv_os_platform ON mv_wazuh_vulnerabilities (os_platform);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_mv_os_full ON mv_wazuh_vulnerabilities (os_full);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_mv_agent_id ON mv_wazuh_vulnerabilities (agent_id);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_mv_connection_id ON mv_wazuh_vulnerabilities (connection_id);"))
         conn.commit()
 
 try:
-    init_stored_procedures()
+    init_materialized_views()
 except Exception as e:
-    print(f"Error initializing stored procedures: {e}")
-
-
+    print(f"Error initializing materialized views: {e}")
 
 def create_default_admin():
     db = SessionLocal()
@@ -151,7 +113,9 @@ app.add_middleware(
 def login(
     form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)
 ):
+    print("Form data: ", form_data)
     user = authenticate_user(db, form_data.username, form_data.password)
+
     if not user:
         raise HTTPException(status_code=400, detail="Usuario o contraseña incorrectos")
     access_token = create_access_token(data={"sub": user.username})
@@ -378,7 +342,7 @@ def test_wazuh_connection(
     ok = test_connection(
         conn.indexer_url, conn.wazuh_user, decrypt(conn.wazuh_password)
     )
-
+    
     conn.tested = True
     conn.last_tested_at = func.now()
     conn.last_test_ok = ok
@@ -405,6 +369,11 @@ def sync_connection(
 
     count = process_wazuh_vulnerabilities(db, conn.id, raw_vulns)
     db.commit()
+    
+    # Refrescar vista materializada luego de la sincronización
+    with engine.connect() as db_conn:
+        db_conn.execute(text("REFRESH MATERIALIZED VIEW mv_wazuh_vulnerabilities;"))
+        db_conn.commit()
 
     return {"synced": count, "connection": conn.name}
 
@@ -474,15 +443,18 @@ def _get_or_create_asset(db: Session, agent_id: str, agent_name: str, os_version
         ip_address = _extract_ip(host)
         existing = db.query(Assets).filter_by(wazuh_agent_id=agent_id, manager_id=manager_id).first()
         if existing:
-            existing.hostname = agent_name or existing.hostname
-            existing.os_version = os_version or existing.os_version
-            existing.ip_address = ip_address or existing.ip_address
+            if agent_name:
+                existing.hostname = agent_name
+            if os_version:
+                existing.os_version = os_version
+            if ip_address and ip_address != "unknown":
+                existing.ip_address = ip_address
             return existing.id
         asset = Assets(
             wazuh_agent_id=agent_id,
-            hostname=agent_name,
-            os_version=os_version,
-            ip_address=ip_address,
+            hostname=agent_name or f"Agent {agent_id}",
+            os_version=os_version or "Unknown",
+            ip_address=ip_address or "unknown",
             manager_id=manager_id,
         )
         db.add(asset)
@@ -569,7 +541,7 @@ def _handle_existing_vuln(db: Session, existing: WazuhVulnerability, vuln: dict)
     existing.last_seen = func.now()
 
 
-def process_wazuh_vulnerabilities(db: Session, conn_id: int, raw_vulns: list) -> int:
+def process_wazuh_vulnerabilities(db: Session, conn_id: int, raw_vulns: list, raw_agents: Optional[list] = None) -> int:
     count = 0
     seen_vuln_ids = set()
 
@@ -578,6 +550,22 @@ def process_wazuh_vulnerabilities(db: Session, conn_id: int, raw_vulns: list) ->
         return 0
 
     manager_id = _get_or_create_manager(db, conn)
+
+    if manager_id and raw_agents:
+        for a in raw_agents:
+            agent_data = a.get("agent", {})
+            host_data = a.get("host") or {}
+            osinfo = host_data.get("os") or {}
+            agent_id = agent_data.get("id")
+            if agent_id:
+                _get_or_create_asset(
+                    db,
+                    agent_id,
+                    agent_data.get("name"),
+                    osinfo.get("version"),
+                    manager_id,
+                    host_data,
+                )
 
     active_vulns_in_db = db.query(WazuhVulnerability).filter_by(connection_id=conn_id, status="ACTIVE").all()
     active_vuln_dict = {v.id: v for v in active_vulns_in_db}
@@ -687,6 +675,11 @@ def sync_all_connections(
 
             count = process_wazuh_vulnerabilities(db, conn.id, raw_vulns)
             db.commit()
+            
+            # Refrescar vista materializada
+            with engine.connect() as db_conn:
+                db_conn.execute(text("REFRESH MATERIALIZED VIEW mv_wazuh_vulnerabilities;"))
+                db_conn.commit()
 
             results.append({"connection": conn.name, "synced": count, "ok": True})
         except Exception as e:
@@ -846,13 +839,17 @@ def filter_by_severity_procedure(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    with db.connection().begin():
-        db.execute(
-            text("CALL sp_get_vulns_by_severity(:sev, :conn_id, 'cursor_sev')"),
-            {"sev": severity, "conn_id": connection_id}
-        )
-        rows = db.execute(text("FETCH ALL FROM cursor_sev")).mappings().all()
-        return [dict(row) for row in rows]
+    query = "SELECT * FROM mv_wazuh_vulnerabilities WHERE 1=1"
+    params = {}
+    if connection_id is not None:
+        query += " AND connection_id = :conn_id"
+        params["conn_id"] = connection_id
+    if severity:
+        query += " AND severity ILIKE :sev"
+        params["sev"] = f"%{severity}%"
+        
+    rows = db.execute(text(query), params).mappings().all()
+    return [dict(row) for row in rows]
 
 
 @app.get("/procedures/filter-by-os")
@@ -862,13 +859,17 @@ def filter_by_os_procedure(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    with db.connection().begin():
-        db.execute(
-            text("CALL sp_get_vulns_by_os(:os, :conn_id, 'cursor_os')"),
-            {"os": os_name, "conn_id": connection_id}
-        )
-        rows = db.execute(text("FETCH ALL FROM cursor_os")).mappings().all()
-        return [dict(row) for row in rows]
+    query = "SELECT * FROM mv_wazuh_vulnerabilities WHERE 1=1"
+    params = {}
+    if connection_id is not None:
+        query += " AND connection_id = :conn_id"
+        params["conn_id"] = connection_id
+    if os_name:
+        query += " AND (COALESCE(os_platform, '') ILIKE :os OR COALESCE(os_full, '') ILIKE :os)"
+        params["os"] = f"%{os_name}%"
+        
+    rows = db.execute(text(query), params).mappings().all()
+    return [dict(row) for row in rows]
 
 
 @app.get("/procedures/filter-by-agent")
@@ -878,10 +879,15 @@ def filter_by_agent_procedure(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    with db.connection().begin():
-        db.execute(
-            text("CALL sp_get_vulns_by_agent(:ag, :conn_id, 'cursor_ag')"),
-            {"ag": agent, "conn_id": connection_id}
-        )
-        rows = db.execute(text("FETCH ALL FROM cursor_ag")).mappings().all()
-        return [dict(row) for row in rows]
+    query = "SELECT * FROM mv_wazuh_vulnerabilities WHERE 1=1"
+    params = {}
+    if connection_id is not None:
+        query += " AND connection_id = :conn_id"
+        params["conn_id"] = connection_id
+    if agent:
+        query += " AND (agent_id = :ag OR COALESCE(agent_name, '') ILIKE :ag_like)"
+        params["ag"] = agent
+        params["ag_like"] = f"%{agent}%"
+        
+    rows = db.execute(text(query), params).mappings().all()
+    return [dict(row) for row in rows]

@@ -18,6 +18,8 @@ services:
   api:
     build: ./vuln-api
     container_name: api
+    ports:
+      - "8000:8000"
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db-api:5432/${POSTGRES_DB}
     depends_on:
