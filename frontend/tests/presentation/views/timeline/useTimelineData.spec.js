@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ref } from 'vue'
 import useTimelineData from '@/presentation/views/timeline/useTimelineData'
 import vulnService from '@/application/services/vulnService'
@@ -16,6 +16,8 @@ describe('useTimelineData', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-03-08T23:59:59Z'))
 
     mockVulnData = [
       {
@@ -52,6 +54,10 @@ describe('useTimelineData', () => {
     }
 
     timeline = useTimelineData(defaultProps)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   describe('build function', () => {
