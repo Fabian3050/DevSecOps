@@ -3,7 +3,7 @@ import re
 import os
 import uuid
 from datetime import datetime, timezone, timedelta
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import set_key, find_dotenv
@@ -73,6 +73,7 @@ def init_materialized_views():
                 SELECT * FROM wazuh_vulnerabilities;
             """))
             
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_id ON mv_wazuh_vulnerabilities (id);"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_mv_severity ON mv_wazuh_vulnerabilities (severity);"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_mv_os_platform ON mv_wazuh_vulnerabilities (os_platform);"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_mv_os_full ON mv_wazuh_vulnerabilities (os_full);"))
@@ -380,7 +381,7 @@ def sync_connection(
     # Refrescar vista materializada luego de la sincronización (Solo en PostgreSQL)
     if engine.dialect.name == "postgresql":
         with engine.connect() as db_conn:
-            db_conn.execute(text("REFRESH MATERIALIZED VIEW mv_wazuh_vulnerabilities;"))
+            db_conn.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_wazuh_vulnerabilities;"))
             db_conn.commit()
 
     return {"synced": count, "connection": conn.name}
@@ -687,7 +688,7 @@ def sync_all_connections(
             # Refrescar vista materializada (Solo en PostgreSQL)
             if engine.dialect.name == "postgresql":
                 with engine.connect() as db_conn:
-                    db_conn.execute(text("REFRESH MATERIALIZED VIEW mv_wazuh_vulnerabilities;"))
+                    db_conn.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_wazuh_vulnerabilities;"))
                     db_conn.commit()
 
             results.append({"connection": conn.name, "synced": count, "ok": True})
@@ -841,62 +842,95 @@ def list_vulnerability_detections(
         for r in rows
     ]
 
-@app.get("/procedures/filter-by-severity")
-def filter_by_severity_procedure(
+@app.get("/vulnerabilities")
+def filter_vulnerabilities(
+    connection_id: Optional[int] = None,
     severity: Optional[str] = None,
-    connection_id: Optional[int] = None,
+    os_platform: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    status: Optional[str] = None,
+    days: Optional[int] = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = "SELECT * FROM mv_wazuh_vulnerabilities WHERE 1=1"
-    params = {}
+    conditions = ["1=1"]
+    parameters = {}
+
     if connection_id is not None:
-        query += " AND connection_id = :conn_id"
-        params["conn_id"] = connection_id
+        conditions.append("connection_id = :conn_id")
+        parameters["conn_id"] = connection_id
+
     if severity:
-        query += " AND severity ILIKE :sev"
-        params["sev"] = f"%{severity}%"
-        
-    rows = db.execute(text(query), params).mappings().all()
+        conditions.append("UPPER(severity) = UPPER(:severity)")
+        parameters["severity"] = severity
+
+    if os_platform:
+        conditions.append("(UPPER(os_platform) = UPPER(:os_platform) OR UPPER(os_full) = UPPER(:os_platform))")
+        parameters["os_platform"] = os_platform
+
+    if agent_id:
+        conditions.append("(agent_id = :agent_id OR UPPER(agent_name) = UPPER(:agent_id))")
+        parameters["agent_id"] = agent_id
+
+    if status:
+        conditions.append("UPPER(status) = UPPER(:status)")
+        parameters["status"] = status
+
+    if days:
+        threshold = datetime.now(timezone.utc) - timedelta(days=days)
+        conditions.append("detected_at >= :threshold")
+        parameters["threshold"] = threshold
+
+    where_clause = " WHERE " + " AND ".join(conditions)
+
+    query = f"""
+        SELECT *
+        FROM mv_wazuh_vulnerabilities
+        {where_clause}
+        ORDER BY detected_at DESC
+        LIMIT :limit
+        OFFSET :offset
+    """
+
+    parameters["limit"] = limit
+    parameters["offset"] = offset
+
+    rows = db.execute(text(query), parameters).mappings().all()
     return [dict(row) for row in rows]
 
 
-@app.get("/procedures/filter-by-os")
-def filter_by_os_procedure(
-    os_name: Optional[str] = None,
+@app.get("/analytics/summary")
+def get_analytics_summary(
     connection_id: Optional[int] = None,
+    days: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = "SELECT * FROM mv_wazuh_vulnerabilities WHERE 1=1"
-    params = {}
-    if connection_id is not None:
-        query += " AND connection_id = :conn_id"
-        params["conn_id"] = connection_id
-    if os_name:
-        query += " AND (COALESCE(os_platform, '') ILIKE :os OR COALESCE(os_full, '') ILIKE :os)"
-        params["os"] = f"%{os_name}%"
-        
-    rows = db.execute(text(query), params).mappings().all()
-    return [dict(row) for row in rows]
+    conditions = ["1=1"]
+    parameters = {}
 
-
-@app.get("/procedures/filter-by-agent")
-def filter_by_agent_procedure(
-    agent: Optional[str] = None,
-    connection_id: Optional[int] = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    query = "SELECT * FROM mv_wazuh_vulnerabilities WHERE 1=1"
-    params = {}
     if connection_id is not None:
-        query += " AND connection_id = :conn_id"
-        params["conn_id"] = connection_id
-    if agent:
-        query += " AND (agent_id = :ag OR COALESCE(agent_name, '') ILIKE :ag_like)"
-        params["ag"] = agent
-        params["ag_like"] = f"%{agent}%"
-        
-    rows = db.execute(text(query), params).mappings().all()
+        conditions.append("connection_id = :conn_id")
+        parameters["conn_id"] = connection_id
+
+    if days:
+        threshold = datetime.now(timezone.utc) - timedelta(days=days)
+        conditions.append("detected_at >= :threshold")
+        parameters["threshold"] = threshold
+
+    where_clause = " WHERE " + " AND ".join(conditions)
+
+    query = f"""
+        SELECT 
+            severity, 
+            COUNT(*) as total_vulnerabilities,
+            COUNT(DISTINCT agent_id) as total_agents
+        FROM mv_wazuh_vulnerabilities
+        {where_clause}
+        GROUP BY severity
+        ORDER BY severity
+    """
+    rows = db.execute(text(query), parameters).mappings().all()
     return [dict(row) for row in rows]
