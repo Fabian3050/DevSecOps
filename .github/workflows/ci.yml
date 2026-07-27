@@ -89,3 +89,14 @@ jobs:
             -Dsonar.python.coverage.reportPaths=vuln-api/coverage.xml
             -Dsonar.javascript.lcov.reportPaths=frontend/coverage/lcov.info
             -Dsonar.login=${{ secrets.SONAR_TOKEN }}
+
+  deploy_local:
+    name: Despliegue Local Automático
+    runs-on: self-hosted
+    needs: [backend, frontend, sonarqube]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Reconstruir y Desplegar con Docker (Solo despliegue de backend y frontend)
+        run: docker-compose up -d --build api frontend
