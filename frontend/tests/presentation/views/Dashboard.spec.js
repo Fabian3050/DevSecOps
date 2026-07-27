@@ -963,12 +963,17 @@ describe('Dashboard.vue', () => {
         })
 
         it('returns true for dates 24 hours ago (boundary)', async () => {
+            vi.useFakeTimers()
+            const fixedTime = new Date('2026-07-27T12:00:00Z')
+            vi.setSystemTime(fixedTime)
+            
             vulnService.getVulns.mockResolvedValueOnce({ data: [] })
             const wrapper = mount(Dashboard)
             await flushPromises()
 
-            const oneDayAgo = new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString()
+            const oneDayAgo = new Date(fixedTime.getTime() - 1000 * 60 * 60 * 24).toISOString()
             expect(wrapper.vm.isNew(oneDayAgo)).toBe(true)
+            vi.useRealTimers()
         })
 
         it('returns false for dates older than 24 hours', async () => {
