@@ -86,6 +86,8 @@ try:
 except Exception as e:
     print(f"Error initializing materialized views: {e}")
 
+
+#esta funcion crea un usuario admin por defecto
 def create_default_admin():
     db = SessionLocal()
     try:
