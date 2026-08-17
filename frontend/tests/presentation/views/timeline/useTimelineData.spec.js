@@ -5,7 +5,9 @@ import vulnService from '@/application/services/vulnService'
 
 vi.mock('@/application/services/vulnService', () => ({
   default: {
-    getVulns: vi.fn()
+    getVulns: vi.fn(),
+    getTimelineVulns: vi.fn(),
+    getAssetsByCve: vi.fn()
   }
 }))
 
@@ -62,7 +64,7 @@ describe('useTimelineData', () => {
 
   describe('build function', () => {
     it('builds timeline successfully with default data', async () => {
-      vulnService.getVulns.mockResolvedValueOnce({ data: mockVulnData })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: mockVulnData })
 
       const result = await timeline.build()
 
@@ -84,14 +86,14 @@ describe('useTimelineData', () => {
     })
 
     it('handles API errors gracefully', async () => {
-      vulnService.getVulns.mockRejectedValueOnce(new Error('API Error'))
+      vulnService.getTimelineVulns.mockRejectedValueOnce(new Error('API Error'))
 
       await expect(timeline.build()).rejects.toThrow('API Error')
       expect(timeline.errorMessage.value).toContain('generar la linea de tiempo')
     })
 
     it('filters by selected agents', async () => {
-      vulnService.getVulns.mockResolvedValueOnce({ data: mockVulnData })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: mockVulnData })
 
       const filteredTimeline = useTimelineData({
         ...defaultProps,
@@ -105,7 +107,7 @@ describe('useTimelineData', () => {
     })
 
     it('filters by selected vulnerabilities', async () => {
-      vulnService.getVulns.mockResolvedValueOnce({ data: mockVulnData })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: mockVulnData })
 
       const filteredTimeline = useTimelineData({
         ...defaultProps,
@@ -121,7 +123,7 @@ describe('useTimelineData', () => {
 
   describe('period handling', () => {
     beforeEach(() => {
-      vulnService.getVulns.mockResolvedValue({ data: mockVulnData })
+      vulnService.getTimelineVulns.mockResolvedValue({ data: mockVulnData })
     })
 
     it('handles 24h period correctly', async () => {
@@ -167,7 +169,7 @@ describe('useTimelineData', () => {
 
   describe('snapshotAt function', () => {
     it('caches snapshots correctly', async () => {
-      vulnService.getVulns.mockResolvedValueOnce({ data: mockVulnData })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: mockVulnData })
       await timeline.build()
 
       const timestamp = Date.now()
@@ -180,7 +182,7 @@ describe('useTimelineData', () => {
     })
 
     it('calculates vulnerability states correctly', async () => {
-      vulnService.getVulns.mockResolvedValueOnce({ data: mockVulnData })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: mockVulnData })
       await timeline.build()
 
       // Test at a time when first vuln is resolved, second is active
@@ -195,7 +197,7 @@ describe('useTimelineData', () => {
 
   describe('getVulnerabilityStateAtTime function', () => {
     it('returns null for vulnerabilities not yet seen', async () => {
-      vulnService.getVulns.mockResolvedValueOnce({ data: mockVulnData })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: mockVulnData })
       await timeline.build()
 
       const earlyTime = new Date('2026-03-06T00:00:00Z').getTime()
@@ -206,7 +208,7 @@ describe('useTimelineData', () => {
     })
 
     it('determines ACTIVE state correctly', async () => {
-      vulnService.getVulns.mockResolvedValueOnce({ data: mockVulnData })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: mockVulnData })
       await timeline.build()
 
       const testTime = new Date('2026-03-06T12:00:00Z').getTime()
@@ -217,7 +219,7 @@ describe('useTimelineData', () => {
     })
 
     it('determines RESOLVED state correctly', async () => {
-      vulnService.getVulns.mockResolvedValueOnce({ data: mockVulnData })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: mockVulnData })
       await timeline.build()
 
       const testTime = new Date('2026-03-07T16:00:00Z').getTime()
@@ -231,7 +233,7 @@ describe('useTimelineData', () => {
 
   describe('getTimelineEventInSlot function', () => {
     it('finds first_seen events correctly', async () => {
-      vulnService.getVulns.mockResolvedValueOnce({ data: mockVulnData })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: mockVulnData })
       await timeline.build()
 
       const vuln = mockVulnData[0]
@@ -267,7 +269,7 @@ describe('useTimelineData', () => {
         }
       ]
 
-      vulnService.getVulns.mockResolvedValueOnce({ data: historyTestData })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: historyTestData })
 
       const historyTimeline = useTimelineData({
         ...defaultProps,
@@ -293,7 +295,7 @@ describe('useTimelineData', () => {
 
   describe('slot generation and types', () => {
     it('generates correct slot types', async () => {
-      vulnService.getVulns.mockResolvedValueOnce({ data: mockVulnData })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: mockVulnData })
       await timeline.build()
 
       const slots = timeline.allSlots.value
@@ -312,7 +314,7 @@ describe('useTimelineData', () => {
     })
 
     it('calculates painted slots correctly', async () => {
-      vulnService.getVulns.mockResolvedValueOnce({ data: mockVulnData })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: mockVulnData })
       await timeline.build()
 
       const paintedCount = timeline.paintedCount.value
@@ -322,7 +324,7 @@ describe('useTimelineData', () => {
 
   describe('summarizeChanges function', () => {
     it('detects detection events', async () => {
-      vulnService.getVulns.mockResolvedValueOnce({ data: mockVulnData })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: mockVulnData })
       await timeline.build()
 
       // The function is tested indirectly through slot generation
@@ -332,7 +334,7 @@ describe('useTimelineData', () => {
     })
 
     it('detects resolution events', async () => {
-      vulnService.getVulns.mockResolvedValueOnce({ data: mockVulnData })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: mockVulnData })
       await timeline.build()
 
       const slots = timeline.allSlots.value
@@ -351,7 +353,7 @@ describe('useTimelineData', () => {
         history: []
       }]
 
-      vulnService.getVulns.mockResolvedValueOnce({ data: noHistoryData })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: noHistoryData })
 
       const result = await timeline.build()
       expect(result.initialZoom).toBe(2)
@@ -367,7 +369,7 @@ describe('useTimelineData', () => {
         history: []
       }]
 
-      vulnService.getVulns.mockResolvedValueOnce({ data: invalidDateData })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: invalidDateData })
 
       const result = await timeline.build()
       expect(result.initialZoom).toBe(2)
@@ -383,7 +385,7 @@ describe('useTimelineData', () => {
         history: null
       }]
 
-      vulnService.getVulns.mockResolvedValueOnce({ data: emptyHistoryData })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: emptyHistoryData })
 
       const result = await timeline.build()
       expect(result.initialZoom).toBe(2)
@@ -398,7 +400,7 @@ describe('useTimelineData', () => {
         history: []
       }))
 
-      vulnService.getVulns.mockResolvedValueOnce({ data: largeData })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: largeData })
 
       await timeline.fetchConnectionVulns()
 
@@ -407,7 +409,7 @@ describe('useTimelineData', () => {
     })
 
     it('handles API response without data array', async () => {
-      vulnService.getVulns.mockResolvedValueOnce({ data: null })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: null })
 
       const result = await timeline.fetchConnectionVulns()
       expect(result).toEqual([])
@@ -416,7 +418,7 @@ describe('useTimelineData', () => {
 
   describe('zoom levels and slot calculations', () => {
     it('handles different zoom levels correctly', async () => {
-      vulnService.getVulns.mockResolvedValueOnce({ data: mockVulnData })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: mockVulnData })
 
       const zoomTimeline = useTimelineData({
         ...defaultProps,
@@ -444,7 +446,7 @@ describe('useTimelineData', () => {
     })
 
     it('handles day granularity correctly', async () => {
-      vulnService.getVulns.mockResolvedValueOnce({ data: mockVulnData })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: mockVulnData })
 
       const dayZoomTimeline = useTimelineData({
         ...defaultProps,
@@ -465,7 +467,7 @@ describe('useTimelineData', () => {
     })
 
     it('paintedCount works correctly', async () => {
-      vulnService.getVulns.mockResolvedValueOnce({ data: mockVulnData })
+      vulnService.getTimelineVulns.mockResolvedValueOnce({ data: mockVulnData })
       await timeline.build()
 
       expect(typeof timeline.paintedCount.value).toBe('number')

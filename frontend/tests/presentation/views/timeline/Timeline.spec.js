@@ -16,7 +16,9 @@ vi.mock('@/application/services/wazuhService', () => ({
 
 vi.mock('@/application/services/vulnService', () => ({
   default: {
-    getVulns: vi.fn()
+    getVulns: vi.fn(),
+    getTimelineVulns: vi.fn(),
+    getAssetsByCve: vi.fn()
   }
 }))
 
@@ -39,7 +41,7 @@ describe('Timeline.vue', () => {
       ]
     })
 
-    vulnService.getVulns.mockResolvedValue({
+    vulnService.getTimelineVulns.mockResolvedValue({
       data: []
     })
   })
@@ -141,7 +143,7 @@ describe('Timeline.vue', () => {
   })
 
   it('updates agent and vuln options when connection changes', async () => {
-    vulnService.getVulns.mockResolvedValueOnce({
+    vulnService.getTimelineVulns.mockResolvedValueOnce({
       data: [
         { agent_name: 'Agent 1', cve_id: 'CVE-001' },
         { agent_name: 'Agent 2', cve_id: 'CVE-002' }
@@ -177,7 +179,7 @@ describe('Timeline.vue', () => {
     await flushPromises()
 
     wrapper.vm.selectedConnection = '1'
-    vulnService.getVulns.mockRejectedValueOnce(new Error('Fetch failed'))
+    vulnService.getTimelineVulns.mockRejectedValueOnce(new Error('Fetch failed'))
 
     await wrapper.vm.onConnectionChange()
     await flushPromises()
@@ -190,7 +192,7 @@ describe('Timeline.vue', () => {
     await flushPromises()
 
     wrapper.vm.selectedConnection = '1'
-    vulnService.getVulns.mockRejectedValueOnce(new Error('Build failed'))
+    vulnService.getTimelineVulns.mockRejectedValueOnce(new Error('Build failed'))
 
     await wrapper.vm.buildTimeline()
     await flushPromises()
@@ -209,7 +211,7 @@ describe('Timeline.vue', () => {
   })
 
   it('computes yearLabel correctly with data', async () => {
-    vulnService.getVulns.mockResolvedValueOnce({
+    vulnService.getTimelineVulns.mockResolvedValueOnce({
       data: [
         { agent_name: 'Agent 1', cve_id: 'CVE-001', first_seen: '2025-01-01T00:00:00Z' },
         { agent_name: 'Agent 1', cve_id: 'CVE-002', first_seen: '2026-01-01T00:00:00Z' }
