@@ -37,7 +37,7 @@ class WazuhConnection(Base):
     wazuh_password = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    vulnerabilities = relationship("WazuhVulnerability", back_populates="connection")
+    vulnerabilities = relationship("WazuhVulnerability", back_populates="connection", cascade="all, delete-orphan")
     tested = Column(Boolean, default=False)
     last_tested_at = Column(DateTime(timezone=True), nullable=True)
     last_test_ok = Column(Boolean, nullable=True)

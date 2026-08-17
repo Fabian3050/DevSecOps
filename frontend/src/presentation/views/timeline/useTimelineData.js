@@ -251,7 +251,7 @@ export default function useTimelineData({
   const paintedCount = computed(() => allSlots.value.filter(slot => slot.painted).length)
 
   const fetchConnectionVulns = async () => {
-    const response = await vulnService.getVulns({
+    const response = await vulnService.getTimelineVulns({
       connectionId: selectedConnection.value,
       limit: LIMIT
     })

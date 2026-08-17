@@ -6,6 +6,7 @@
         <h1 class="title">Panorama de Amenazas</h1>
         <p class="subtitle">Visualiza y gestiona el inventario de vulnerabilidades reportado por Wazuh.</p>
       </div>
+
       <div>
         <button v-if="currentView === 'vulnerabilities'" class="btn btn-primary" @click="syncVulns" :disabled="syncing">
           <svg v-if="syncing" class="spin" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg>
@@ -14,6 +15,9 @@
         </button>
       </div>
     </div>
+
+    <!-- Analytics Dashboard -->
+    <AnalyticsCharts :data="analyticsData" />
 
     <!-- View Navigation Buttons -->
     <div class="view-navigation">
@@ -75,12 +79,19 @@
     <!-- VULNERABILITIES VIEW -->
     <template v-if="currentView === 'vulnerabilities'">
       <!-- Filter Toggle Bar (minimalista) -->
-      <div v-if="!loading && vulns.length > 0" class="filter-toggle-bar">
+      <div v-if="!loading" class="filter-toggle-bar">
         <button class="btn-filter-toggle" @click="showFilters = !showFilters">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
           </svg>
           <span>{{ showFilters ? 'Ocultar filtros' : 'Filtros avanzados' }}</span>
+        </button>
+        <button v-if="showFilters" class="btn-apply-filters" @click="applyFilters">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+          </svg>
+          <span>Aplicar Filtros</span>
         </button>
         <button v-if="showFilters" class="btn-clear-filters" @click="clearFilters">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -97,109 +108,74 @@
         <div class="filter-row">
           <div class="f-group">
             <label>Conexión Wazuh</label>
-            <select v-model="selectedConnection" @change="onConnectionChange" class="filter-input">
+            <select v-model="apiFilters.connection_id" class="filter-input">
               <option value="">Todas las conexiones</option>
               <option v-for="conn in connections" :key="conn.id" :value="conn.id">{{ conn.name }}</option>
             </select>
           </div>
 
-          <div class="f-group popover-wrap" v-click-outside="() => (dropdowns.agents = false)">
-            <label>Agentes</label>
-            <button class="filter-input dd-btn" @click="dropdowns.agents = !dropdowns.agents" :disabled="!agentOptions.length">
-              <span>{{ selectedAgents.length ? selectedAgents.length + ' sel.' : 'Todos' }}</span>
-              <span>▼</span>
-            </button>
-            <div v-if="dropdowns.agents" class="dd-panel fade-in">
-              <input type="text" v-model="search.agent" placeholder="Buscar agente..." class="dd-search">
-              <div class="dd-actions">
-                <span @click="selectedAgents = [...agentOptions]">Todos</span>
-                <span @click="selectedAgents = []">Limpiar</span>
-              </div>
-              <div class="dd-list custom-scroll">
-                <label v-for="agent in filteredAgents" :key="agent" class="dd-item">
-                  <input type="checkbox" :value="agent" v-model="selectedAgents"> {{ agent }}
-                </label>
-              </div>
-            </div>
-          </div>
-
-          <div class="f-group popover-wrap" v-click-outside="() => (dropdowns.vulns = false)">
+          <div class="f-group">
             <label>CVE ID</label>
-            <button class="filter-input dd-btn" @click="dropdowns.vulns = !dropdowns.vulns" :disabled="!vulnOptions.length">
-              <span>{{ selectedVulns.length ? selectedVulns.length + ' sel.' : 'Todas' }}</span>
-              <span>▼</span>
-            </button>
-            <div v-if="dropdowns.vulns" class="dd-panel fade-in">
-              <input type="text" v-model="search.vuln" placeholder="Buscar CVE..." class="dd-search">
-              <div class="dd-actions">
-                <span @click="selectedVulns = [...vulnOptions]">Todas</span>
-                <span @click="selectedVulns = []">Limpiar</span>
-              </div>
-              <div class="dd-list custom-scroll">
-                <label v-for="vuln in filteredCVEOptions" :key="vuln" class="dd-item">
-                  <input type="checkbox" :value="vuln" v-model="selectedVulns"> {{ vuln }}
-                </label>
-              </div>
-            </div>
-          </div>
-
-          <div class="f-group popover-wrap" v-click-outside="() => (dropdowns.packages = false)">
-            <label>Software Afectado</label>
-            <button class="filter-input dd-btn" @click="dropdowns.packages = !dropdowns.packages" :disabled="!packageOptions.length">
-              <span>{{ selectedPackages.length ? selectedPackages.length + ' sel.' : 'Todos' }}</span>
-              <span>▼</span>
-            </button>
-            <div v-if="dropdowns.packages" class="dd-panel fade-in">
-              <input type="text" v-model="search.package" placeholder="Buscar software..." class="dd-search">
-              <div class="dd-actions">
-                <span @click="selectedPackages = [...packageOptions]">Todos</span>
-                <span @click="selectedPackages = []">Limpiar</span>
-              </div>
-              <div class="dd-list custom-scroll">
-                <label v-for="pkg in filteredPackages" :key="pkg" class="dd-item">
-                  <input type="checkbox" :value="pkg" v-model="selectedPackages"> {{ pkg }}
-                </label>
-              </div>
-            </div>
-          </div>
-
-          <div class="f-group popover-wrap" v-click-outside="() => (dropdowns.severity = false)">
-            <label>Severidad</label>
-            <button class="filter-input dd-btn" @click="dropdowns.severity = !dropdowns.severity" :disabled="!severityOptions.length">
-              <span>{{ selectedSeverities.length ? selectedSeverities.length + ' sel.' : 'Todas' }}</span>
-              <span>▼</span>
-            </button>
-            <div v-if="dropdowns.severity" class="dd-panel fade-in">
-              <div class="dd-actions">
-                <span @click="selectedSeverities = [...severityOptions]">Todas</span>
-                <span @click="selectedSeverities = []">Limpiar</span>
-              </div>
-              <div class="dd-list custom-scroll">
-                <label v-for="sev in severityOptions" :key="sev" class="dd-item">
-                  <input type="checkbox" :value="sev" v-model="selectedSeverities"> 
-                  <span :class="'badge-mini ' + getSeverityBadgeClass(sev)">{{ sev }}</span>
-                </label>
-              </div>
-            </div>
+            <input type="text" v-model="apiFilters.cve_id" placeholder="Ej. CVE-2023-1234" class="filter-input">
           </div>
 
           <div class="f-group">
-            <label>Score CVSS (Base)</label>
-            <div class="range-inputs">
-              <input type="number" v-model.number="scoreMin" min="0" max="10" step="0.1" placeholder="Min" class="filter-input-sm">
-              <span>-</span>
-              <input type="number" v-model.number="scoreMax" min="0" max="10" step="0.1" placeholder="Max" class="filter-input-sm">
-            </div>
+            <label>Año</label>
+            <input type="number" v-model.number="apiFilters.year" placeholder="Ej. 2024" class="filter-input" min="1999" max="2100">
+          </div>
+          
+          <div class="f-group">
+            <label>Severidad</label>
+            <select v-model="apiFilters.severity" class="filter-input">
+              <option value="">Todas</option>
+              <option value="CRITICAL">Crítica</option>
+              <option value="HIGH">Alta</option>
+              <option value="MEDIUM">Media</option>
+              <option value="LOW">Baja</option>
+            </select>
+          </div>
+
+          <div class="f-group">
+            <label>Plataforma OS</label>
+            <input type="text" v-model="apiFilters.os_platform" placeholder="Ej. ubuntu" class="filter-input">
+          </div>
+
+          <div class="f-group">
+            <label>Estado</label>
+            <select v-model="apiFilters.status" class="filter-input">
+              <option value="">Todos</option>
+              <option value="ACTIVE">Activos</option>
+              <option value="RESOLVED">Resueltos</option>
+            </select>
+          </div>
+
+          <div class="f-group">
+            <label>Reincidentes</label>
+            <select v-model="apiFilters.reincident" class="filter-input">
+              <option value="">Todas</option>
+              <option value="true">Solo Reincidentes</option>
+            </select>
+          </div>
+
+          <div class="f-group">
+            <label>Días recientes</label>
+            <select v-model="apiFilters.days" class="filter-input">
+              <option value="">Cualquier fecha</option>
+              <option value="7">Últimos 7 días</option>
+              <option value="30">Últimos 30 días</option>
+              <option value="90">Últimos 90 días</option>
+            </select>
           </div>
         </div>
       </div>
+
 
       <!-- Vulnerabilities Table -->
       <div v-if="!loading" class="card" style="padding: 0;">
         <div class="table-wrapper">
         <div v-if="totalPages > 1" class="pagination-header">
           <span class="pagination-info">
-            Mostrando {{ (currentPage - 1) * itemsPerPage + 1 }} - {{ Math.min(currentPage * itemsPerPage, sortedVulns.length) }} de {{ sortedVulns.length }} vulnerabilidades
+            Mostrando {{ totalVulns === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1 }} - {{ Math.min(currentPage * itemsPerPage, totalVulns) }} de {{ totalVulns }} vulnerabilidades
           </span>
           <div class="pagination-nav">
             <button class="btn-icon-page" :disabled="currentPage === 1" @click="jumpBackward" title="Retroceder 5 páginas" aria-label="Retroceder 5 páginas">
@@ -295,7 +271,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="vuln in paginatedVulns" :key="vuln.id">
+            <tr v-for="vuln in sortedVulns" :key="vuln.id" class="vuln-row fade-in">
               <td>{{ vuln.connection_name || '-' }}</td>
               <td>
                 <span :class="getSeverityClass(vuln.severity)">
@@ -424,12 +400,21 @@
 
     <!-- ASSETS VIEW -->
     <template v-if="currentView === 'assets'">
-      <div class="card" style="margin-bottom: 1rem; padding: 1rem;">
-        <label style="font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.5rem;">Filtrar por Manager</label>
-        <select v-model="filterManagerId" class="filter-input" style="max-width: 300px;">
-          <option value="">Todos los managers</option>
-          <option v-for="manager in managers" :key="manager.id" :value="manager.id">{{ manager.name }}</option>
-        </select>
+      <div class="card" style="margin-bottom: 1rem; padding: 1rem; display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+        <div>
+          <label style="font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.5rem;">Filtrar por Manager</label>
+          <select v-model="filterManagerId" class="filter-input" style="min-width: 250px;">
+            <option value="">Todos los managers</option>
+            <option v-for="manager in managers" :key="manager.id" :value="manager.id">{{ manager.name }}</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.5rem;">Búsqueda por CVE</label>
+          <div style="display: flex; gap: 0.5rem;">
+            <input v-model="filterAssetCve" type="text" class="filter-input" placeholder="Ej. CVE-2023-1234" style="min-width: 250px;" @keyup.enter="fetchAssets" />
+            <button class="btn btn-primary" @click="fetchAssets">Buscar</button>
+          </div>
+        </div>
       </div>
       <div v-if="!loading" class="card" style="padding: 0;">
         <div class="table-wrapper">
@@ -570,6 +555,7 @@ import managerService from '../../application/services/managerService'
 import assetService from '../../application/services/assetService'
 import catalogService from '../../application/services/catalogService'
 import detectionService from '../../application/services/detectionService'
+import AnalyticsCharts from '../components/AnalyticsCharts.vue'
 
 // View state
 const currentView = ref('vulnerabilities')
@@ -596,6 +582,7 @@ const pageJump = 10
 const filterManagerId = ref('')
 const filterAssetId = ref('')
 const filterCveId = ref('')
+const filterAssetCve = ref('')
 
 const connections = ref([])
 const agentOptions = ref([])
@@ -603,30 +590,21 @@ const vulnOptions = ref([])
 const packageOptions = ref([])
 const severityOptions = ref([])
 
-const selectedConnection = ref('')
-const selectedAgents = ref([])
-const selectedVulns = ref([])
-const selectedPackages = ref([])
-const selectedSeverities = ref([])
-const scoreMin = ref('')
-const scoreMax = ref('')
+const totalVulns = ref(0)
+const analyticsData = ref(null)
 
-// Dropdown state
-const search = reactive({ agent: '', vuln: '', package: '' })
-const dropdowns = reactive({ agents: false, vulns: false, packages: false, severity: false })
-
-// Filtered lists for search
-const filteredAgents = computed(() =>
-  agentOptions.value.filter(agent => agent.toLowerCase().includes(search.agent.toLowerCase()))
-)
-
-const filteredCVEOptions = computed(() =>
-  vulnOptions.value.filter(vuln => vuln.toLowerCase().includes(search.vuln.toLowerCase()))
-)
-
-const filteredPackages = computed(() =>
-  packageOptions.value.filter(pkg => pkg.toLowerCase().includes(search.package.toLowerCase()))
-)
+const apiFilters = reactive({
+  connection_id: '',
+  cve_id: '',
+  year: '',
+  severity: '',
+  os_platform: '',
+  status: '',
+  days: '',
+  reincident: '',
+  limit: 50,
+  offset: 0
+})
 
 const getSeverityLevel = (s) => {
   if (!s) return 0
@@ -660,68 +638,8 @@ const compareValues = (a, b, key) => {
 }
 
 
-const updateFilterOptions = () => {
-  const agents = new Set()
-  const vulnIds = new Set()
-  const packages = new Set()
-  const severities = new Set()
-
-  vulns.value.forEach(vuln => {
-    if (vuln.agent_name) agents.add(vuln.agent_name)
-    if (vuln.cve_id) vulnIds.add(vuln.cve_id)
-    if (vuln.package_name) packages.add(vuln.package_name)
-    if (vuln.severity) severities.add(vuln.severity.toUpperCase())
-  })
-
-  agentOptions.value = Array.from(agents).sort()
-  vulnOptions.value = Array.from(vulnIds).sort()
-  packageOptions.value = Array.from(packages).sort()
-  severityOptions.value = Array.from(severities).sort((a, b) => {
-    const levelA = getSeverityLevel(a.toLowerCase())
-    const levelB = getSeverityLevel(b.toLowerCase())
-    return levelB - levelA
-  })
-}
-
-const matchesConnection = (vuln) => 
-  !selectedConnection.value || vuln.connection_id === selectedConnection.value
-
-const matchesAgent = (vuln) => 
-  selectedAgents.value.length === 0 || selectedAgents.value.includes(vuln.agent_name)
-
-const matchesVuln = (vuln) => 
-  selectedVulns.value.length === 0 || selectedVulns.value.includes(vuln.cve_id)
-
-const matchesPackage = (vuln) => 
-  selectedPackages.value.length === 0 || selectedPackages.value.includes(vuln.package_name)
-
-const matchesSeverity = (vuln) => {
-  if (selectedSeverities.value.length === 0) return true
-  const vulnSeverity = (vuln.severity || 'UNKNOWN').toUpperCase()
-  return selectedSeverities.value.includes(vulnSeverity)
-}
-
-const matchesScore = (vuln) => {
-  if (scoreMin.value === '' && scoreMax.value === '') return true
-  
-  const score = vuln.score_base
-  if (score === null || score === undefined) return false
-  
-  const minOk = scoreMin.value === '' || score >= scoreMin.value
-  const maxOk = scoreMax.value === '' || score <= scoreMax.value
-  
-  return minOk && maxOk
-}
-
 const filteredVulns = computed(() => {
-  return vulns.value.filter(vuln => {
-    return matchesConnection(vuln) &&
-           matchesAgent(vuln) &&
-           matchesVuln(vuln) &&
-           matchesPackage(vuln) &&
-           matchesSeverity(vuln) &&
-           matchesScore(vuln)
-  })
+  return vulns.value
 })
 
 const sortedVulns = computed(() => {
@@ -734,13 +652,7 @@ const sortedVulns = computed(() => {
 
 // === LOGICA DE PAGINACION ===
 const totalPages = computed(() => {
-  return Math.ceil(sortedVulns.value.length / itemsPerPage)
-})
-
-const paginatedVulns = computed(() => {
-  const start = (currentPage.value - 1) * itemsPerPage
-  const end = start + itemsPerPage
-  return sortedVulns.value.slice(start, end)
+  return Math.ceil(totalVulns.value / itemsPerPage)
 })
 
 const visiblePages = computed(() => {
@@ -815,13 +727,6 @@ const jumpForward = () => {
 }
 
 // Al filtrar o ordenar volvemos a la pagina 1
-watch(selectedConnection, () => { currentPage.value = 1 })
-watch(selectedAgents, () => { currentPage.value = 1 })
-watch(selectedVulns, () => { currentPage.value = 1 })
-watch(selectedPackages, () => { currentPage.value = 1 })
-watch(selectedSeverities, () => { currentPage.value = 1 })
-watch(scoreMin, () => { currentPage.value = 1 })
-watch(scoreMax, () => { currentPage.value = 1 })
 watch(sortKey, () => { currentPage.value = 1 })
 watch(sortOrder, () => { currentPage.value = 1 })
 
@@ -838,36 +743,28 @@ const sortBy = (key) => {
   }
 }
 
-const onConnectionChange = () => {
-  // When connection changes, clear dependent filters
-  selectedAgents.value = []
-  selectedVulns.value = []
-  selectedPackages.value = []
-  selectedSeverities.value = []
-  scoreMin.value = ''
-  scoreMax.value = ''
-}
-
 const clearFilters = () => {
-  selectedConnection.value = ''
-  selectedAgents.value = []
-  selectedVulns.value = []
-  selectedPackages.value = []
-  selectedSeverities.value = []
-  scoreMin.value = ''
-  scoreMax.value = ''
+  apiFilters.connection_id = ''
+  apiFilters.cve_id = ''
+  apiFilters.year = ''
+  apiFilters.severity = ''
+  apiFilters.os_platform = ''
+  apiFilters.status = ''
+  apiFilters.days = ''
 }
 
 const fetchVulns = async () => {
   loading.value = true
   error.value = ''
   try {
-    const res = await vulnService.getVulns()
-    if (res.data && res.data.length > 0) {
-      vulns.value = res.data
-      updateFilterOptions()
+    apiFilters.offset = (currentPage.value - 1) * apiFilters.limit
+    const res = await vulnService.getVulns(apiFilters)
+    if (res.data) {
+      vulns.value = res.data.items || []
+      totalVulns.value = res.data.total || 0
     } else {
       vulns.value = []
+      totalVulns.value = 0
     }
   } catch (err) {
     console.error('Error fetching vulns:', err)
@@ -875,6 +772,27 @@ const fetchVulns = async () => {
     loading.value = false
   }
 }
+
+const fetchAnalytics = async () => {
+  try {
+    const res = await vulnService.getAnalyticsSummary(vulns)
+    if (res.data) {
+      analyticsData.value = res.data
+    }
+  } catch (err) {
+    console.error('Error fetching analytics:', err)
+  }
+}
+
+const applyFilters = () => {
+  currentPage.value = 1
+  fetchVulns()
+  fetchAnalytics()
+}
+
+watch(currentPage, () => {
+  fetchVulns()
+})
 
 const fetchConnections = async () => {
   try {
@@ -917,8 +835,19 @@ const fetchAssets = async () => {
   loading.value = true
   error.value = ''
   try {
-    const res = await assetService.getAssets({ limit: 100 })
-    assets.value = res?.data || []
+    if (filterAssetCve.value && filterAssetCve.value.trim() !== '') {
+      const res = await vulnService.getAssetsByCve(filterAssetCve.value.trim())
+      assets.value = (res?.data || []).map(a => ({
+        id: a.agent_id,
+        hostname: a.agent_name,
+        wazuh_agent_id: a.agent_id,
+        ip_address: 'N/A',
+        os_version: a.os_full
+      }))
+    } else {
+      const res = await assetService.getAssets({ limit: 100 })
+      assets.value = res?.data || []
+    }
   } catch (err) {
     console.error('Error fetching assets:', err)
     assets.value = []
@@ -1045,6 +974,7 @@ const timeAgo = (date) => {
 onMounted(() => {
   fetchConnections()
   fetchVulns()
+  fetchAnalytics()
 })
 </script>
 
@@ -1410,6 +1340,30 @@ th {
 .btn-filter-toggle svg {
   width: 16px;
   height: 16px;
+}
+
+.btn-apply-filters {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background-color: var(--primary-color, #3b82f6);
+  color: #ffffff;
+  border: none;
+  border-radius: var(--border-radius);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-right: 0.5rem;
+}
+
+.btn-apply-filters:hover {
+  background-color: #2563eb;
+  transform: translateY(-1px);
+}
+
+.btn-apply-filters svg {
+  flex-shrink: 0;
 }
 
 .btn-clear-filters {

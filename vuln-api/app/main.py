@@ -7,7 +7,7 @@ from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import set_key, find_dotenv
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List, Annotated, Optional
 from pydantic import BaseModel
 from sqlalchemy.sql import func
@@ -334,6 +334,20 @@ def delete_connection(
     conn = db.query(WazuhConnection).filter(WazuhConnection.id == conn_id).first()
     if not conn:
         raise HTTPException(status_code=404, detail=CONNECTION_NOT_FOUND)
+
+    # Eliminar en masa el historial de vulnerabilidades para evitar Constraint Errors y Timeouts del ORM
+    db.execute(text("""
+        DELETE FROM vulnerability_history 
+        WHERE vulnerability_id IN (
+            SELECT id FROM wazuh_vulnerabilities WHERE connection_id = :conn_id
+        )
+    """), {"conn_id": conn_id})
+
+    # Eliminar las vulnerabilidades de esta conexión
+    db.execute(text("""
+        DELETE FROM wazuh_vulnerabilities WHERE connection_id = :conn_id
+    """), {"conn_id": conn_id})
+
     db.delete(conn)
     db.commit()
     return {"message": "Conexión eliminada"}
@@ -783,6 +797,7 @@ def list_assets(
     query = db.query(Assets)
     if manager_id:
         query = query.filter(Assets.manager_id == manager_id)
+
     if limit is not None:
         query = query.limit(limit)
     rows = query.all()
@@ -847,11 +862,14 @@ def list_vulnerability_detections(
 @app.get("/vulnerabilities")
 def filter_vulnerabilities(
     connection_id: Optional[int] = None,
+    cve_id: Optional[str] = None,
+    year: Optional[int] = None,
     severity: Optional[str] = None,
     os_platform: Optional[str] = None,
     agent_id: Optional[str] = None,
     status: Optional[str] = None,
     days: Optional[int] = None,
+    reincident: Optional[bool] = None,
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
@@ -863,6 +881,17 @@ def filter_vulnerabilities(
     if connection_id is not None:
         conditions.append("connection_id = :conn_id")
         parameters["conn_id"] = connection_id
+
+    if cve_id:
+        conditions.append("UPPER(cve_id) = UPPER(:cve_id)")
+        parameters["cve_id"] = cve_id
+
+    if year:
+        start_of_year = datetime(year, 1, 1, tzinfo=timezone.utc)
+        end_of_year = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+        conditions.append("detected_at >= :start_of_year AND detected_at < :end_of_year")
+        parameters["start_of_year"] = start_of_year
+        parameters["end_of_year"] = end_of_year
 
     if severity:
         conditions.append("UPPER(severity) = UPPER(:severity)")
@@ -885,27 +914,121 @@ def filter_vulnerabilities(
         conditions.append("detected_at >= :threshold")
         parameters["threshold"] = threshold
 
+    base_where_clause = " WHERE " + " AND ".join(conditions)
+
+    if reincident:
+        conditions.append(f"""
+            cve_id IN (
+                SELECT cve_id 
+                FROM mv_wazuh_vulnerabilities 
+                {base_where_clause}
+                GROUP BY cve_id 
+                HAVING COUNT(DISTINCT agent_id) > 1
+            )
+        """)
+
     where_clause = " WHERE " + " AND ".join(conditions)
 
-    query = f"""
-        SELECT *
-        FROM mv_wazuh_vulnerabilities
-        {where_clause}
-        ORDER BY detected_at DESC
-        LIMIT :limit
-        OFFSET :offset
-    """
+    if reincident:
+        count_query = f"""
+            SELECT COUNT(DISTINCT cve_id) 
+            FROM mv_wazuh_vulnerabilities
+            {where_clause}
+        """
+        query = f"""
+            SELECT 
+                cve_id,
+                MAX(id) as id,
+                MAX(connection_id) as connection_id,
+                MAX(agent_id) as agent_id,
+                MAX(agent_name) as agent_name,
+                MAX(os_full) as os_full,
+                MAX(os_platform) as os_platform,
+                MAX(os_version) as os_version,
+                MAX(package_name) as package_name,
+                MAX(package_version) as package_version,
+                MAX(package_type) as package_type,
+                MAX(package_arch) as package_arch,
+                MAX(severity) as severity,
+                MAX(score_base) as score_base,
+                MAX(score_version) as score_version,
+                MAX(detected_at) as detected_at,
+                MAX(published_at) as published_at,
+                MAX(description) as description,
+                MAX(reference) as reference,
+                MAX(scanner_vendor) as scanner_vendor,
+                MAX(first_seen) as first_seen,
+                MAX(last_seen) as last_seen,
+                MAX(status) as status
+            FROM mv_wazuh_vulnerabilities
+            {where_clause}
+            GROUP BY cve_id
+            ORDER BY MAX(detected_at) DESC
+            LIMIT :limit
+            OFFSET :offset
+        """
+    else:
+        count_query = f"""
+            SELECT COUNT(*) 
+            FROM mv_wazuh_vulnerabilities
+            {where_clause}
+        """
+        query = f"""
+            SELECT *
+            FROM mv_wazuh_vulnerabilities
+            {where_clause}
+            ORDER BY detected_at DESC
+            LIMIT :limit
+            OFFSET :offset
+        """
+
+    total_count = db.execute(text(count_query), parameters).scalar()
 
     parameters["limit"] = limit
     parameters["offset"] = offset
 
     rows = db.execute(text(query), parameters).mappings().all()
-    return [dict(row) for row in rows]
+    return {
+        "total": total_count,
+        "items": [dict(row) for row in rows]
+    }
+
+
+@app.get("/vulnerabilities/timeline")
+def get_vulnerabilities_timeline(
+    connection_id: Optional[int] = None,
+    limit: int = Query(default=2000, ge=1, le=5000),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    query = db.query(WazuhVulnerability).options(joinedload(WazuhVulnerability.history))
+    
+    if connection_id is not None:
+        query = query.filter(WazuhVulnerability.connection_id == connection_id)
+        
+    vulns = query.order_by(WazuhVulnerability.first_seen.desc()).limit(limit).all()
+    
+    result = []
+    for v in vulns:
+        result.append({
+            "id": v.id,
+            "cve_id": v.cve_id,
+            "agent_name": v.agent_name,
+            "severity": v.severity,
+            "first_seen": v.first_seen,
+            "history": [{"timestamp": h.timestamp, "action": h.action} for h in v.history]
+        })
+    return result
 
 
 @app.get("/analytics/summary")
 def get_analytics_summary(
     connection_id: Optional[int] = None,
+    cve_id: Optional[str] = None,
+    year: Optional[int] = None,
+    severity: Optional[str] = None,
+    os_platform: Optional[str] = None,
+    status: Optional[str] = None,
     days: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -917,6 +1040,31 @@ def get_analytics_summary(
         conditions.append("connection_id = :conn_id")
         parameters["conn_id"] = connection_id
 
+    if cve_id:
+        conditions.append("cve_id ILIKE :cve_id")
+        parameters["cve_id"] = f"%{cve_id}%"
+
+    if year:
+        start_date = datetime(year, 1, 1, tzinfo=timezone.utc)
+        end_date = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+        conditions.append("detected_at >= :year_start AND detected_at < :year_end")
+        parameters["year_start"] = start_date
+        parameters["year_end"] = end_date
+
+    if severity:
+        conditions.append("severity = :severity")
+        parameters["severity"] = severity
+
+    if os_platform:
+        conditions.append("os_platform ILIKE :os_platform")
+        parameters["os_platform"] = f"%{os_platform}%"
+
+    if status:
+        conditions.append("status = :status")
+        parameters["status"] = status
+    else:
+        conditions.append("status = 'ACTIVE'")
+
     if days:
         threshold = datetime.now(timezone.utc) - timedelta(days=days)
         conditions.append("detected_at >= :threshold")
@@ -924,15 +1072,98 @@ def get_analytics_summary(
 
     where_clause = " WHERE " + " AND ".join(conditions)
 
-    query = f"""
-        SELECT 
-            severity, 
-            COUNT(*) as total_vulnerabilities,
-            COUNT(DISTINCT agent_id) as total_agents
+    query_sev = f"""
+        SELECT severity, COUNT(*) as count
         FROM mv_wazuh_vulnerabilities
         {where_clause}
         GROUP BY severity
-        ORDER BY severity
     """
-    rows = db.execute(text(query), parameters).mappings().all()
+    
+    query_cves = f"""
+        SELECT cve_id, COUNT(*) as count
+        FROM mv_wazuh_vulnerabilities
+        {where_clause}
+        GROUP BY cve_id
+        ORDER BY count DESC
+        LIMIT 5
+    """
+
+    query_agents = f"""
+        SELECT agent_name, COUNT(*) as count
+        FROM mv_wazuh_vulnerabilities
+        {where_clause}
+        GROUP BY agent_name
+        ORDER BY count DESC
+        LIMIT 5
+    """
+
+    query_summary = f"""
+        SELECT 
+            COUNT(*) as total_vulns,
+            COUNT(DISTINCT agent_id) as total_agents,
+            SUM(CASE WHEN severity IN ('Critical', 'CRITICAL', 'Crítica', 'critical') THEN 1 ELSE 0 END) as critical_vulns,
+            COUNT(DISTINCT CASE WHEN severity IN ('Critical', 'CRITICAL', 'Crítica', 'critical') THEN agent_id ELSE NULL END) as critical_agents
+        FROM mv_wazuh_vulnerabilities
+        {where_clause}
+    """
+
+    query_reincidentes = f"""
+        SELECT COUNT(*) as reincident_cves
+        FROM (
+            SELECT cve_id
+            FROM mv_wazuh_vulnerabilities
+            {where_clause}
+            GROUP BY cve_id
+            HAVING COUNT(DISTINCT agent_id) > 1
+        ) sub
+    """
+
+    severity_rows = db.execute(text(query_sev), parameters).mappings().all()
+    cves_rows = db.execute(text(query_cves), parameters).mappings().all()
+    agents_rows = db.execute(text(query_agents), parameters).mappings().all()
+    
+    summary_row = db.execute(text(query_summary), parameters).mappings().first()
+    reincident_row = db.execute(text(query_reincidentes), parameters).mappings().first()
+
+    total_vulns = summary_row["total_vulns"] or 0
+    total_agents = summary_row["total_agents"] or 0
+    critical_vulns = summary_row["critical_vulns"] or 0
+    critical_agents = summary_row["critical_agents"] or 0
+    
+    pct_critical_vulns = round((critical_vulns / total_vulns * 100), 1) if total_vulns > 0 else 0
+    pct_critical_agents = round((critical_agents / total_agents * 100), 1) if total_agents > 0 else 0
+    reincident_cves = reincident_row["reincident_cves"] or 0
+
+    return {
+        "severity_distribution": [dict(r) for r in severity_rows],
+        "top_cves": [dict(r) for r in cves_rows],
+        "top_agents": [dict(r) for r in agents_rows],
+        "summary_metrics": {
+            "total_vulns": total_vulns,
+            "critical_vulns": critical_vulns,
+            "pct_critical_vulns": pct_critical_vulns,
+            "total_agents": total_agents,
+            "critical_agents": critical_agents,
+            "pct_critical_agents": pct_critical_agents,
+            "reincident_cves": reincident_cves
+        }
+    }
+
+
+@app.get("/vulnerabilities/{cve_id}/assets")
+def get_assets_by_vulnerability(
+    cve_id: str,
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    query = """
+        SELECT DISTINCT agent_id, agent_name, os_platform, os_version, os_full
+        FROM mv_wazuh_vulnerabilities
+        WHERE cve_id = :cve_id
+        ORDER BY agent_id
+        LIMIT :limit OFFSET :offset
+    """
+    rows = db.execute(text(query), {"cve_id": cve_id, "limit": limit, "offset": offset}).mappings().all()
     return [dict(row) for row in rows]
