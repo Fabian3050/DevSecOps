@@ -61,3 +61,55 @@ def test_connection(indexer_url: str, wazuh_user: str, wazuh_password: str) -> b
         return resp.status_code == 200
     except Exception:
         return False
+
+# obtiene los agentes registrados consultando el índice wazuh-monitoring
+def fetch_all_agents(indexer_url: str, wazuh_user: str, wazuh_password: str):
+    url = f"{indexer_url}/wazuh-monitoring-*/_search"
+    body = {
+        "size": 0,
+        "aggs": {
+            "agents": {
+                "terms": {"field": "id", "size": 10000},
+                "aggs": {
+                    "latest": {
+                        "top_hits": {
+                            "size": 1,
+                            "sort": [{"timestamp": {"order": "desc"}}],
+                            "_source": ["id", "name", "ip", "os"]
+                        }
+                    }
+                }
+            }
+        }
+    }
+    try:
+        resp = requests.post(
+            url,
+            json=body,
+            auth=HTTPBasicAuth(wazuh_user, wazuh_password),
+            verify=False,
+            timeout=60
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        buckets = data.get("aggregations", {}).get("agents", {}).get("buckets", [])
+        
+        formatted_agents = []
+        for b in buckets:
+            hits = b.get("latest", {}).get("hits", {}).get("hits", [])
+            if hits:
+                source = hits[0]["_source"]
+                formatted_agents.append({
+                    "agent": {
+                        "id": source.get("id"),
+                        "name": source.get("name")
+                    },
+                    "host": {
+                        "ip": source.get("ip"),
+                        "os": source.get("os", {})
+                    }
+                })
+        return formatted_agents
+    except Exception as e:
+        print(f"Error fetching agents: {e}")
+        return []

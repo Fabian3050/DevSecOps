@@ -3,7 +3,7 @@ import re
 import os
 import uuid
 from datetime import datetime, timezone, timedelta
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, BackgroundTasks
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import set_key, find_dotenv
@@ -30,7 +30,7 @@ from .auth import (
     hash_password,
     verify_password,
 )
-from .wazuh_client import fetch_all_vulns, test_connection
+from .wazuh_client import fetch_all_vulns, test_connection, fetch_all_agents
 from .crypto import encrypt, decrypt
 
 Base.metadata.create_all(bind=engine)
@@ -375,9 +375,43 @@ def test_wazuh_connection(
     return {"ok": ok, "message": "Conexión exitosa" if ok else "No se pudo conectar"}
 
 
+def _run_sync_task(conn_id: int):
+    db = SessionLocal()
+    try:
+        conn = db.query(WazuhConnection).filter(WazuhConnection.id == conn_id).first()
+        if not conn or not conn.is_active:
+            return
+
+        raw_agents = fetch_all_agents(
+            conn.indexer_url,
+            conn.wazuh_user,
+            decrypt(conn.wazuh_password),
+        )
+
+        raw_vulns = fetch_all_vulns(
+            conn.indexer_url,
+            conn.wazuh_user,
+            decrypt(conn.wazuh_password),
+        )
+
+        process_wazuh_vulnerabilities(db, conn.id, raw_vulns, raw_agents)
+        db.commit()
+        
+        if engine.dialect.name == "postgresql":
+            with engine.connect() as db_conn:
+                db_conn.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_wazuh_vulnerabilities;"))
+                db_conn.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"Error in background sync for conn {conn_id}: {e}")
+    finally:
+        db.close()
+
+
 @app.post("/wazuh-connections/{conn_id}/sync")
 def sync_connection(
     conn_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -387,20 +421,9 @@ def sync_connection(
     if not conn.is_active:
         raise HTTPException(status_code=400, detail="La conexión está inactiva")
 
-    raw_vulns = fetch_all_vulns(
-        conn.indexer_url, conn.wazuh_user, decrypt(conn.wazuh_password)
-    )
+    background_tasks.add_task(_run_sync_task, conn.id)
 
-    count = process_wazuh_vulnerabilities(db, conn.id, raw_vulns)
-    db.commit()
-    
-    # Refrescar vista materializada luego de la sincronización (Solo en PostgreSQL)
-    if engine.dialect.name == "postgresql":
-        with engine.connect() as db_conn:
-            db_conn.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_wazuh_vulnerabilities;"))
-            db_conn.commit()
-
-    return {"synced": count, "connection": conn.name}
+    return {"message": "Sincronización iniciada en segundo plano", "connection": conn.name}
 
 
 def _parse_wazuh_datetime(value) -> Optional[datetime]:
@@ -575,6 +598,7 @@ def process_wazuh_vulnerabilities(db: Session, conn_id: int, raw_vulns: list, ra
         return 0
 
     manager_id = _get_or_create_manager(db, conn)
+    asset_cache = {}
 
     if manager_id and raw_agents:
         for a in raw_agents:
@@ -583,7 +607,7 @@ def process_wazuh_vulnerabilities(db: Session, conn_id: int, raw_vulns: list, ra
             osinfo = host_data.get("os") or {}
             agent_id = agent_data.get("id")
             if agent_id:
-                _get_or_create_asset(
+                aid = _get_or_create_asset(
                     db,
                     agent_id,
                     agent_data.get("name"),
@@ -591,6 +615,8 @@ def process_wazuh_vulnerabilities(db: Session, conn_id: int, raw_vulns: list, ra
                     manager_id,
                     host_data,
                 )
+                if aid:
+                    asset_cache[agent_id] = aid
 
     active_vulns_in_db = db.query(WazuhVulnerability).filter_by(connection_id=conn_id, status="ACTIVE").all()
     active_vuln_dict = {v.id: v for v in active_vulns_in_db}
@@ -606,14 +632,20 @@ def process_wazuh_vulnerabilities(db: Session, conn_id: int, raw_vulns: list, ra
             continue
 
         if manager_id:
-            asset_id = _get_or_create_asset(
-                db,
-                agent.get("id"),
-                agent.get("name"),
-                osinfo.get("version"),
-                manager_id,
-                host,
-            )
+            agent_id = agent.get("id")
+            asset_id = asset_cache.get(agent_id)
+            if not asset_id and agent_id:
+                asset_id = _get_or_create_asset(
+                    db,
+                    agent_id,
+                    agent.get("name"),
+                    osinfo.get("version"),
+                    manager_id,
+                    host,
+                )
+                if asset_id:
+                    asset_cache[agent_id] = asset_id
+                    
             _get_or_create_cve_catalog(db, vuln.get("id"), vuln.get("severity"), vuln.get("description"), (vuln.get("score") or {}).get("base"))
             if asset_id:
                 _create_vulnerability_detection(db, asset_id, vuln.get("id"), vuln.get("detected_at"), pkg.get("name"), pkg.get("version"))
@@ -685,32 +717,16 @@ def _resolve_missing_vulns(db, active_vuln_dict, seen_vuln_ids):
 
 @app.post("/vulns/sync-all")
 def sync_all_connections(
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db), 
+    current_user: User = Depends(get_current_user)
 ):
     conns = db.query(WazuhConnection).filter(WazuhConnection.is_active == True).all()
     results = []
 
     for conn in conns:
-        try:
-            raw_vulns = fetch_all_vulns(
-                conn.indexer_url,
-                conn.wazuh_user,
-                decrypt(conn.wazuh_password),
-            )
-
-            count = process_wazuh_vulnerabilities(db, conn.id, raw_vulns)
-            db.commit()
-            
-            # Refrescar vista materializada (Solo en PostgreSQL)
-            if engine.dialect.name == "postgresql":
-                with engine.connect() as db_conn:
-                    db_conn.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_wazuh_vulnerabilities;"))
-                    db_conn.commit()
-
-            results.append({"connection": conn.name, "synced": count, "ok": True})
-        except Exception as e:
-            db.rollback()
-            results.append({"connection": conn.name, "ok": False, "error": str(e)})
+        background_tasks.add_task(_run_sync_task, conn.id)
+        results.append({"connection": conn.name, "message": "Sincronización iniciada en segundo plano", "ok": True})
 
     return results
 
