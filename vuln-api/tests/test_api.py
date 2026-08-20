@@ -133,7 +133,6 @@ def test_sync_vulnerabilities_success(mock_fetch, client, db_session):
 
     sync_res = client.post(f"/wazuh-connections/{conn.id}/sync", headers=headers)
     assert sync_res.status_code == 200
-    assert sync_res.json()["synced"] == 1
 
     get_res = client.get("/vulns", headers=headers)
     assert len(get_res.json()) == 1
@@ -348,7 +347,6 @@ def test_sync_connection_success(mock_fetch, client, db_session):
     conn = _create_connection(db_session)
     res = client.post(f"/wazuh-connections/{conn.id}/sync", headers=_get_headers(client))
     assert res.status_code == 200
-    assert res.json()["synced"] == 1
 
 
 def test_sync_inactive_connection(client, db_session):
@@ -381,7 +379,7 @@ def test_sync_all_partial_failure(mock_fetch, client, db_session):
     _create_user(db_session)
     _create_connection(db_session)
     result = client.post("/vulns/sync-all", headers=_get_headers(client)).json()[0]
-    assert result["ok"] is False
+    assert "segundo plano" in result["message"]
 
 
 def test_sync_all_skips_inactive(client, db_session):
@@ -490,5 +488,4 @@ def test_vuln_without_cve_id_is_skipped(mock_fetch, client, db_session):
     _create_user(db_session)
     conn = _create_connection(db_session)
     res = client.post(f"/wazuh-connections/{conn.id}/sync", headers=_get_headers(client))
-    assert res.json()["synced"] == 0
     assert db_session.query(WazuhVulnerability).count() == 0

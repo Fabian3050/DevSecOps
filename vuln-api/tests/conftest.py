@@ -55,3 +55,30 @@ def client(db_session):
     
     # Limpiar los overrides después del test
     app.dependency_overrides.clear()
+
+from unittest.mock import patch
+from fastapi import BackgroundTasks
+
+@pytest.fixture(autouse=True)
+def mock_fetch_agents_global():
+    with patch("app.main.fetch_all_agents", return_value=[]) as mock:
+        yield mock
+
+class DummySession:
+    def __init__(self, session):
+        self._session = session
+    def __getattr__(self, name):
+        return getattr(self._session, name)
+    def close(self):
+        pass # Do not close the test session!
+
+@pytest.fixture(autouse=True)
+def mock_bg_and_session(db_session):
+    def sync_add_task(self, func, *args, **kwargs):
+        return func(*args, **kwargs)
+        
+    dummy = DummySession(db_session)
+    with patch("app.main.SessionLocal", return_value=dummy):
+        with patch.object(BackgroundTasks, "add_task", sync_add_task):
+            yield
+
